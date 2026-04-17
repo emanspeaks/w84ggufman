@@ -11,6 +11,7 @@ mode (`--models-dir`).
 - **View local models** with total size and loaded/unloaded status (cross-referenced
   against `/v1/models` on your llama-server)
 - **Delete models** and automatically restart `llama-cpp.service` via D-Bus
+- **Manually restart** the llama-server from the UI at any time
 - Single binary with an embedded frontend — no separate build step, no Node.js
 
 ## Environment
@@ -60,6 +61,33 @@ pass it with `--config`:
   "hfToken": ""
 }
 ```
+
+## Polkit setup
+
+gguf-manager restarts the llama-server via D-Bus (`systemd1.manage-units`).
+By default this requires elevated privileges — you'll see
+`connection reset by peer` errors without it.
+
+**NixOS**: the polkit rule is installed automatically by the NixOS module (see
+below). No manual action required.
+
+**Other systemd distros**: drop a rules file into `/etc/polkit-1/rules.d/`:
+
+```sh
+sudo tee /etc/polkit-1/rules.d/50-gguf-manager.rules <<'EOF'
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") == "llama-cpp.service" &&
+      subject.user == "YOUR_SERVICE_USER") {
+    return polkit.Result.YES;
+  }
+});
+EOF
+```
+
+Replace `YOUR_SERVICE_USER` with the OS user gguf-manager runs as, and
+`llama-cpp.service` with your actual service name if it differs. Polkit picks
+up new rules files without a restart.
 
 ## NixOS
 
@@ -111,6 +139,7 @@ gomod2nix generate
 | `GET` | `/api/download/status` | SSE stream of download output |
 | `DELETE` | `/api/local/{name}` | Delete a model directory |
 | `GET` | `/api/status` | App state: llama reachability, download in progress |
+| `POST` | `/api/restart` | Restart the configured llama service via D-Bus |
 
 ## Building
 
