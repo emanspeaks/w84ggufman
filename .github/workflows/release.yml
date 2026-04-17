@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -54,5 +56,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'snapshot' }}
+          prerelease: ${{ github.ref_type != 'tag' }}
           files: gguf-manager-*
-          generate_release_notes: true
+          generate_release_notes: ${{ github.ref_type == 'tag' }}
