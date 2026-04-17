@@ -6,16 +6,27 @@
 <title>gguf-manager</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; padding-bottom: 36px; }
-  header {
-    background: #0f172a; color: #f8fafc; padding: 0.875rem 1.5rem;
-    display: flex; align-items: center; gap: 1rem;
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0f172a; color: #e2e8f0;
+    min-height: 100vh; padding-bottom: 36px;
   }
-  header h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
-  #status-indicator { font-size: 0.8rem; padding: 3px 10px; border-radius: 12px; }
-  .status-online  { background: #166534; color: #bbf7d0; }
-  .status-offline { background: #7f1d1d; color: #fecaca; }
-  .status-unknown { background: #374151; color: #d1d5db; }
+  /* ── Header ──────────────────────────────────────────────────────────── */
+  header {
+    background: #020617; color: #f8fafc; padding: 0.75rem 1.5rem;
+    display: flex; align-items: center; gap: 1rem;
+    border-bottom: 1px solid #1e293b;
+  }
+  .header-title { display: flex; align-items: baseline; gap: 0.5rem; flex: 1; }
+  header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: -0.01em; }
+  #app-version {
+    font-size: 0.7rem; color: #475569;
+    font-family: 'Menlo', 'Consolas', monospace;
+  }
+  #status-indicator { font-size: 0.78rem; padding: 3px 10px; border-radius: 12px; }
+  .status-online  { background: #14532d; color: #86efac; }
+  .status-offline { background: #7f1d1d; color: #fca5a5; }
+  .status-unknown { background: #1e293b; color: #94a3b8; }
   .btn-restart {
     background: transparent; border: 1px solid #334155; color: #94a3b8;
     font-size: 0.75rem; padding: 4px 10px; border-radius: 5px;
@@ -23,107 +34,120 @@
   }
   .btn-restart:hover:not(:disabled) { background: #1e293b; color: #f1f5f9; }
   .btn-restart:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* ── Layout ──────────────────────────────────────────────────────────── */
   main {
     display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;
     padding: 1.25rem; max-width: 1280px; margin: 0 auto;
   }
   @media (max-width: 768px) { main { grid-template-columns: 1fr; } }
   section {
-    background: #fff; border-radius: 10px; padding: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    background: #1e293b; border-radius: 10px; padding: 1.25rem;
+    border: 1px solid #334155;
   }
   .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-  .section-header h2 { font-size: 1rem; font-weight: 600; }
-  /* Buttons */
+  .section-header h2 { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
   button { cursor: pointer; border: none; border-radius: 5px; font-size: 0.825rem; font-weight: 500; padding: 5px 12px; transition: background 0.15s; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn-primary  { background: #2563eb; color: #fff; }
-  .btn-primary:hover:not(:disabled)  { background: #1d4ed8; }
-  .btn-danger   { background: #dc2626; color: #fff; }
-  .btn-danger:hover:not(:disabled)   { background: #b91c1c; }
-  .btn-secondary { background: #64748b; color: #fff; }
-  .btn-secondary:hover:not(:disabled) { background: #475569; }
-  /* Model cards */
+  .btn-primary:hover:not(:disabled)  { background: #3b82f6; }
+  .btn-danger   { background: #991b1b; color: #fca5a5; }
+  .btn-danger:hover:not(:disabled)   { background: #b91c1c; color: #fff; }
+  .btn-secondary { background: #334155; color: #cbd5e1; }
+  .btn-secondary:hover:not(:disabled) { background: #475569; color: #f1f5f9; }
+  /* ── Model cards ─────────────────────────────────────────────────────── */
   #local-list { display: flex; flex-direction: column; gap: 0.5rem; }
   .model-card {
     display: flex; align-items: center; justify-content: space-between;
-    border: 1px solid #e5e7eb; border-radius: 7px; padding: 0.625rem 0.75rem;
+    border: 1px solid #334155; border-radius: 7px; padding: 0.625rem 0.75rem;
+    background: #0f172a;
   }
   .model-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .model-name { font-size: 0.875rem; font-weight: 500; word-break: break-all; }
-  .model-detail { font-size: 0.75rem; color: #6b7280; }
+  .model-name { font-size: 0.875rem; font-weight: 500; color: #f1f5f9; word-break: break-all; }
+  .model-detail { font-size: 0.75rem; color: #64748b; }
   .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
-  .badge-loaded   { background: #dcfce7; color: #166534; }
-  .badge-unloaded { background: #f1f5f9; color: #64748b; }
-  /* Right panel form */
-  .hint { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.875rem; }
-  .hint a { color: #2563eb; }
+  .badge-loaded   { background: #14532d; color: #86efac; }
+  .badge-unloaded { background: #1e293b; color: #64748b; }
+  /* ── Right panel ─────────────────────────────────────────────────────── */
+  .hint { font-size: 0.8rem; color: #64748b; margin-bottom: 0.875rem; }
+  .hint a { color: #60a5fa; }
+  .hint a:hover { color: #93c5fd; }
   .input-row { display: flex; gap: 0.5rem; margin-bottom: 0.875rem; }
+  label { color: #94a3b8; }
   input[type="text"] {
-    flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 5px;
-    font-size: 0.875rem; outline: none;
+    flex: 1; padding: 6px 10px;
+    background: #0f172a; border: 1px solid #334155; border-radius: 5px;
+    color: #f1f5f9; font-size: 0.875rem; outline: none;
   }
-  input[type="text"]:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
-  /* File list */
+  input[type="text"]::placeholder { color: #475569; }
+  input[type="text"]:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+  /* ── File list ───────────────────────────────────────────────────────── */
   #repo-results { display: flex; flex-direction: column; gap: 0; }
   .file-row {
     display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;
+    padding: 0.5rem 0; border-bottom: 1px solid #334155;
   }
   .file-row:last-child { border-bottom: none; }
-  .file-name { font-size: 0.8rem; font-family: monospace; flex: 1; word-break: break-all; color: #374151; }
-  .file-size { font-size: 0.75rem; color: #9ca3af; white-space: nowrap; }
-  /* Error / empty messages */
-  .msg-error { color: #dc2626; font-size: 0.825rem; margin-top: 0.5rem; }
-  .msg-empty { color: #9ca3af; font-size: 0.825rem; font-style: italic; text-align: center; padding: 1rem 0; }
-  .msg-loading { color: #6b7280; font-size: 0.825rem; }
-  /* Status bar */
+  .file-name { font-size: 0.8rem; font-family: monospace; flex: 1; word-break: break-all; color: #cbd5e1; }
+  .file-size { font-size: 0.75rem; color: #475569; white-space: nowrap; }
+  /* ── Messages ────────────────────────────────────────────────────────── */
+  .msg-error   { color: #f87171; font-size: 0.825rem; margin-top: 0.5rem; }
+  .msg-empty   { color: #475569; font-size: 0.825rem; font-style: italic; text-align: center; padding: 1rem 0; }
+  .msg-loading { color: #64748b; font-size: 0.825rem; }
+  /* ── Status bar ──────────────────────────────────────────────────────── */
+  :root { --log-height: 200px; }
   #status-bar {
     position: fixed; bottom: 0; left: 0; right: 0;
-    background: #0f172a; color: #64748b;
+    background: #020617; color: #64748b;
     font-family: 'Menlo', 'Consolas', monospace;
     font-size: 0.7rem; line-height: 1.4;
     border-top: 2px solid #1e293b;
-    z-index: 100;
-    transition: border-color 0.2s;
-    cursor: pointer; user-select: none;
+    z-index: 100; transition: border-color 0.2s;
   }
-  #status-bar.active { border-top-color: #2563eb; }
+  #status-bar.active { border-top-color: #3b82f6; }
+  #status-resize-handle {
+    display: none; height: 5px;
+    cursor: ns-resize; background: #1e293b;
+    transition: background 0.15s;
+  }
+  #status-resize-handle:hover,
+  #status-resize-handle.dragging { background: #334155; }
+  #status-bar.expanded #status-resize-handle { display: block; }
   #status-bar-main {
     display: flex; align-items: center; gap: 0.75rem;
     padding: 6px 1rem; min-height: 32px;
+    cursor: pointer; user-select: none;
   }
   #status-bar-label {
-    color: #475569; white-space: nowrap;
+    color: #334155; white-space: nowrap;
     border-right: 1px solid #1e293b; padding-right: 0.75rem;
     font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
   }
-  #status-bar-text {
-    flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  }
+  #status-bar-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   #status-bar.active #status-bar-text { color: #e2e8f0; }
   #status-bar-chevron {
-    color: #475569; font-size: 0.65rem; flex-shrink: 0;
+    color: #334155; font-size: 0.65rem; flex-shrink: 0;
     transition: transform 0.2s;
   }
   #status-bar.expanded #status-bar-chevron { transform: rotate(180deg); }
-  #status-log-wrapper {
-    overflow: hidden; max-height: 0;
-    transition: max-height 0.25s ease;
-  }
-  #status-bar.expanded #status-log-wrapper { max-height: 200px; }
+  #status-log-wrapper { overflow: hidden; max-height: 0; transition: max-height 0.25s ease; }
+  #status-bar.expanded #status-log-wrapper { max-height: var(--log-height); }
   #status-log {
-    max-height: 200px; overflow-y: auto;
-    padding: 0.375rem 1rem 0.375rem;
+    height: var(--log-height); overflow-y: auto;
+    padding: 0.375rem 1rem;
     border-top: 1px solid #1e293b;
     color: #94a3b8; white-space: pre-wrap; word-break: break-all;
+    user-select: text; cursor: text;
   }
   #status-log .log-line { display: block; }
 </style>
 </head>
 <body>
 <header>
-  <h1>gguf-manager</h1>
+  <div class="header-title">
+    <h1>gguf-manager</h1>
+    <span id="app-version"></span>
+  </div>
   <span id="status-indicator" class="status-unknown">connecting…</span>
   <button class="btn-restart" id="restart-btn">Restart Service</button>
 </header>
@@ -159,7 +183,10 @@
 
 <!-- Status bar -->
 <div id="status-bar">
-  <div id="status-log-wrapper"><div id="status-log"></div></div>
+  <div id="status-log-wrapper">
+    <div id="status-resize-handle"></div>
+    <div id="status-log"></div>
+  </div>
   <div id="status-bar-main">
     <span id="status-bar-label">Ready</span>
     <span id="status-bar-text"></span>
@@ -226,7 +253,35 @@ function toggleStatusBar() {
   }
 }
 
-document.getElementById('status-bar').addEventListener('click', toggleStatusBar);
+// Toggle on the bottom row only — not on the log text or resize handle.
+document.getElementById('status-bar-main').addEventListener('click', toggleStatusBar);
+
+// ── Log resize ─────────────────────────────────────────────────────────────
+
+(function initResize() {
+  const handle = document.getElementById('status-resize-handle');
+  let startY = 0, startHeight = 200;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startY = e.clientY;
+    startHeight = parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--log-height'), 10) || 200;
+    handle.classList.add('dragging');
+
+    function onMove(e) {
+      const height = Math.max(80, Math.min(600, startHeight + (startY - e.clientY)));
+      document.documentElement.style.setProperty('--log-height', height + 'px');
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
 
 // ── Local models ───────────────────────────────────────────────────────────
 
@@ -411,6 +466,10 @@ async function pollStatus() {
     const el = document.getElementById('status-indicator');
     el.textContent = s.llamaReachable ? 'llama-server: online' : 'llama-server: offline';
     el.className = s.llamaReachable ? 'status-online' : 'status-offline';
+    if (s.version) {
+      const ver = document.getElementById('app-version');
+      if (!ver.textContent) ver.textContent = s.version;
+    }
     if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);
     }
