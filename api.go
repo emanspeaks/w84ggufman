@@ -123,6 +123,7 @@ type statusResponse struct {
 	LlamaReachable     bool   `json:"llamaReachable"`
 	DownloadInProgress bool   `json:"downloadInProgress"`
 	ActiveDownload     string `json:"activeDownload"`
+	Version            string `json:"version"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +139,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
 		ActiveDownload:     active,
+		Version:            version,
 	})
 }
 
