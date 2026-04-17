@@ -84,14 +84,14 @@ security.polkit.extraConfig = ''
   polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         action.lookup("unit") == "llama-cpp.service" &&
-        subject.user == "your-username") {
+        subject.user == "gguf-manager") {
       return polkit.Result.YES;
     }
   });
 '';
 ```
 
-Replace `your-username` with the OS user running gguf-manager and
+Replace `gguf-manager` with whatever user runs the binary, and
 `llama-cpp.service` with your actual service name if it differs. Then rebuild:
 
 ```sh
@@ -122,27 +122,56 @@ rules files without a restart.
 Import the flake and the NixOS module:
 
 ```nix
-# flake.nix inputs:
+# flake.nix inputs
 gguf-manager.url = "github:emanspeaks/gguf-manager";
+```
 
-# NixOS configuration:
+```nix
+# NixOS configuration
 imports = [ gguf-manager.nixosModules.default ];
 
 services.gguf-manager = {
   enable         = true;
-  package        = pkgs.gguf-manager; # or gguf-manager.packages.${system}.default
-  port           = 9293;
+  package        = gguf-manager.packages.${system}.default;
   modelsDir      = "/var/lib/llama-models";
   llamaServerURL = "http://localhost:9292";
   llamaService   = "llama-cpp.service";
-  hfToken        = "";               # set if needed
+  # hfToken      = "";  # set if needed
 };
 ```
 
-The service runs as the `llama-cpp` user in the `llm` group. Enabling the module
-also installs a polkit rule that allows the service user to restart
-`llama-cpp.service` via D-Bus without root. If you run the binary any other way,
-see the [Polkit setup](#polkit-setup) section above.
+The module does the following automatically when enabled:
+
+- Creates a `gguf-manager` system user in the `llm` group
+- Sets `HF_HOME=/var/lib/gguf-manager` so the `hf` tool can write its cache
+  (without this it tries to write to `/.cache` and fails)
+- Creates `/var/lib/gguf-manager` as a persistent state directory owned by the
+  service user
+- Creates `modelsDir` (`/var/lib/llama-models` by default) as a group-writable
+  directory so the service user can write model subdirectories into it
+- Installs a polkit rule allowing the service user to restart `llamaService` via
+  D-Bus without root
+
+### Required: add the service user to your llm group
+
+The `llm` group must exist and `modelsDir` must be writable by it. Make sure your
+`configuration.nix` includes the group and any other users who need access:
+
+```nix
+users.groups.llm.members = [ "your-username" "llama-cpp" "gguf-manager" ];
+```
+
+If `modelsDir` is managed by your llama-cpp setup rather than the gguf-manager
+module, ensure it has `0775` permissions with group `llm`:
+
+```nix
+systemd.tmpfiles.rules = [
+  "d /var/lib/llama-models 0775 llama-cpp llm -"
+];
+```
+
+If you run the binary outside the module, see the
+[Polkit setup](#polkit-setup) section above.
 
 ### Nix dependencies
 

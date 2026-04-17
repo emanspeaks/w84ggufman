@@ -47,9 +47,29 @@ in {
       default = "";
       description = "Optional HuggingFace token for private repos or higher rate limits.";
     };
+
+    serviceUser = lib.mkOption {
+      type    = lib.types.str;
+      default = "gguf-manager";
+      description = "OS user the gguf-manager service runs as.";
+    };
+
+    serviceGroup = lib.mkOption {
+      type    = lib.types.str;
+      default = "llm";
+      description = "OS group the gguf-manager service runs as. Must have write access to modelsDir.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    # Create the service user if using the default name.
+    # If you set serviceUser to an existing user, manage it yourself.
+    users.users.${cfg.serviceUser} = lib.mkIf (cfg.serviceUser == "gguf-manager") {
+      isSystemUser = true;
+      group        = cfg.serviceGroup;
+      description  = "gguf-manager service user";
+    };
+
     systemd.services.gguf-manager = {
       description = "gguf-manager — local GGUF model management UI";
       after       = [ "network.target" cfg.llamaService ];
@@ -57,26 +77,36 @@ in {
 
       path = [ pkgs.python3Packages.huggingface-hub ];
 
-      serviceConfig = {
-        ExecStart          = "${cfg.package}/bin/gguf-manager --config ${configFile}";
-        User               = "llama-cpp";
-        Group              = "llm";
-        Restart            = "on-failure";
-        RestartSec         = "5s";
+      environment = {
+        # hf writes its cache and token file here; without this it tries /.cache
+        HF_HOME = "/var/lib/gguf-manager";
+      };
 
-        # Allow restarting llama-cpp.service via D-Bus
-        AmbientCapabilities = "";
-        # D-Bus policy must allow the llama-cpp user to manage units;
-        # on NixOS this is typically handled by the polkit rule below.
+      serviceConfig = {
+        ExecStart      = "${cfg.package}/bin/gguf-manager --config ${configFile}";
+        User           = cfg.serviceUser;
+        Group          = cfg.serviceGroup;
+        Restart        = "on-failure";
+        RestartSec     = "5s";
+
+        # Persistent state dir: /var/lib/gguf-manager (owned by service user)
+        StateDirectory     = "gguf-manager";
+        StateDirectoryMode = "0750";
       };
     };
 
-    # Allow the llama-cpp user to restart the llama-cpp service without root.
+    # Ensure modelsDir exists and is group-writable so the service user can
+    # create model subdirectories in it.
+    systemd.tmpfiles.rules = [
+      "d ${cfg.modelsDir} 0775 root ${cfg.serviceGroup} -"
+    ];
+
+    # Allow the service user to restart the llama service without root.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
             action.lookup("unit") == "${cfg.llamaService}" &&
-            subject.user == "llama-cpp") {
+            subject.user == "${cfg.serviceUser}") {
           return polkit.Result.YES;
         }
       });
