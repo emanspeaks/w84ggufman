@@ -86,10 +86,20 @@ services.gguf-manager = {
 The service runs as the `llama-cpp` user in the `llm` group and is granted a
 polkit rule that lets it restart `llama-cpp.service` via D-Bus without root.
 
-### First Nix build
+### Nix dependencies
 
-The `vendorHash` in `flake.nix` is a placeholder. Run `nix build` once; the
-error will print the correct hash. Replace the placeholder and rebuild.
+The flake uses [gomod2nix](https://github.com/nix-community/gomod2nix) instead
+of a manual `vendorHash`. The `gomod2nix.toml` lockfile is regenerated
+automatically by CI whenever `go.mod` or `go.sum` change. No manual hash
+management required.
+
+To regenerate it locally after updating dependencies:
+
+```sh
+gomod2nix generate
+```
+
+`gomod2nix` is included in the flake's `devShell`.
 
 ## API
 

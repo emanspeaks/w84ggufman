@@ -4,19 +4,23 @@
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    gomod2nix = {
+      url   = "github:nix-community/gomod2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, gomod2nix }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        inherit (gomod2nix.legacyPackages.${system}) buildGoApplication;
       in {
-        packages.default = pkgs.buildGoModule {
+        packages.default = buildGoApplication {
           pname   = "gguf-manager";
           version = "0.1.0";
           src     = ./.;
-
-          vendorHash = "";
+          modules = ./gomod2nix.toml;
 
           meta = {
             description = "Local web UI for managing GGUF models with llama-server";
@@ -30,6 +34,7 @@
             go
             gopls
             gotools
+            gomod2nix.packages.${system}.default
           ];
         };
       })
