@@ -47,6 +47,7 @@ func main() {
 	mux.HandleFunc("GET /api/download/status", srv.handleDownloadStatus)
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
+	mux.HandleFunc("POST /api/restart", srv.handleRestart)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("gguf-manager %s listening on %s", version, addr)

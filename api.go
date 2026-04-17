@@ -179,6 +179,14 @@ func (s *server) handleDownloadStatus(w http.ResponseWriter, r *http.Request) {
 	s.dl.streamSSE(w, r)
 }
 
+func (s *server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if err := restartService(s.cfg.LlamaService); err != nil {
+		http.Error(w, "failed to restart service: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)

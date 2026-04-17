@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -83,6 +84,9 @@ func (d *downloader) appendLine(line string) {
 func (d *downloader) run(repoID, pattern, destDir string) {
 	args := []string{"download", repoID, "--include", pattern, "--local-dir", destDir}
 	cmd := exec.Command("hf", args...)
+	if d.cfg.HFToken != "" {
+		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		d.finishWithError(fmt.Errorf("stdout pipe: %w", err))

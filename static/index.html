@@ -6,16 +6,23 @@
 <title>gguf-manager</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; color: #1a1a1a; min-height: 100vh; padding-bottom: 36px; }
   header {
     background: #0f172a; color: #f8fafc; padding: 0.875rem 1.5rem;
-    display: flex; align-items: center; gap: 1.5rem;
+    display: flex; align-items: center; gap: 1rem;
   }
-  header h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; }
+  header h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; flex: 1; }
   #status-indicator { font-size: 0.8rem; padding: 3px 10px; border-radius: 12px; }
   .status-online  { background: #166534; color: #bbf7d0; }
   .status-offline { background: #7f1d1d; color: #fecaca; }
   .status-unknown { background: #374151; color: #d1d5db; }
+  .btn-restart {
+    background: transparent; border: 1px solid #334155; color: #94a3b8;
+    font-size: 0.75rem; padding: 4px 10px; border-radius: 5px;
+    cursor: pointer; transition: background 0.15s, color 0.15s; white-space: nowrap;
+  }
+  .btn-restart:hover:not(:disabled) { background: #1e293b; color: #f1f5f9; }
+  .btn-restart:disabled { opacity: 0.45; cursor: not-allowed; }
   main {
     display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;
     padding: 1.25rem; max-width: 1280px; margin: 0 auto;
@@ -66,24 +73,59 @@
   .file-row:last-child { border-bottom: none; }
   .file-name { font-size: 0.8rem; font-family: monospace; flex: 1; word-break: break-all; color: #374151; }
   .file-size { font-size: 0.75rem; color: #9ca3af; white-space: nowrap; }
-  /* Download log */
-  #download-section { margin-top: 1rem; }
-  #download-label { font-size: 0.8rem; font-weight: 600; color: #374151; margin-bottom: 0.375rem; }
-  #log-box {
-    background: #0f172a; color: #e2e8f0; font-family: 'Menlo', 'Consolas', monospace;
-    font-size: 0.75rem; line-height: 1.5; padding: 0.75rem; border-radius: 6px;
-    height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
-  }
   /* Error / empty messages */
   .msg-error { color: #dc2626; font-size: 0.825rem; margin-top: 0.5rem; }
   .msg-empty { color: #9ca3af; font-size: 0.825rem; font-style: italic; text-align: center; padding: 1rem 0; }
   .msg-loading { color: #6b7280; font-size: 0.825rem; }
+  /* Status bar */
+  #status-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #0f172a; color: #64748b;
+    font-family: 'Menlo', 'Consolas', monospace;
+    font-size: 0.7rem; line-height: 1.4;
+    border-top: 2px solid #1e293b;
+    z-index: 100;
+    transition: border-color 0.2s;
+    cursor: pointer; user-select: none;
+  }
+  #status-bar.active { border-top-color: #2563eb; }
+  #status-bar-main {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 6px 1rem; min-height: 32px;
+  }
+  #status-bar-label {
+    color: #475569; white-space: nowrap;
+    border-right: 1px solid #1e293b; padding-right: 0.75rem;
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  #status-bar-text {
+    flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  #status-bar.active #status-bar-text { color: #e2e8f0; }
+  #status-bar-chevron {
+    color: #475569; font-size: 0.65rem; flex-shrink: 0;
+    transition: transform 0.2s;
+  }
+  #status-bar.expanded #status-bar-chevron { transform: rotate(180deg); }
+  #status-log-wrapper {
+    overflow: hidden; max-height: 0;
+    transition: max-height 0.25s ease;
+  }
+  #status-bar.expanded #status-log-wrapper { max-height: 200px; }
+  #status-log {
+    max-height: 200px; overflow-y: auto;
+    padding: 0.375rem 1rem 0.375rem;
+    border-top: 1px solid #1e293b;
+    color: #94a3b8; white-space: pre-wrap; word-break: break-all;
+  }
+  #status-log .log-line { display: block; }
 </style>
 </head>
 <body>
 <header>
   <h1>gguf-manager</h1>
   <span id="status-indicator" class="status-unknown">connecting…</span>
+  <button class="btn-restart" id="restart-btn">Restart Service</button>
 </header>
 <main>
   <!-- Left panel: Local Models -->
@@ -112,14 +154,18 @@
     </div>
     <div id="repo-error" class="msg-error" style="display:none"></div>
     <div id="repo-results"></div>
-
-    <div id="download-section" style="display:none">
-      <div id="download-label">Download log</div>
-      <pre id="log-box"></pre>
-    </div>
-    <div id="download-error" class="msg-error" style="display:none"></div>
   </section>
 </main>
+
+<!-- Status bar -->
+<div id="status-bar">
+  <div id="status-log-wrapper"><div id="status-log"></div></div>
+  <div id="status-bar-main">
+    <span id="status-bar-label">Ready</span>
+    <span id="status-bar-text"></span>
+    <span id="status-bar-chevron">▲</span>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -150,6 +196,37 @@ function showErr(id, msg) {
 }
 
 function clearErr(id) { showErr(id, ''); }
+
+// ── Status bar ─────────────────────────────────────────────────────────────
+
+function appendLogLine(line) {
+  const log = document.getElementById('status-log');
+  const atBottom = log.scrollHeight - log.scrollTop <= log.clientHeight + 4;
+  const span = document.createElement('span');
+  span.className = 'log-line';
+  span.textContent = line;
+  log.appendChild(span);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function setStatusBar(label, text, active) {
+  const bar = document.getElementById('status-bar');
+  document.getElementById('status-bar-label').textContent = label;
+  document.getElementById('status-bar-text').textContent = text;
+  bar.classList.toggle('active', active);
+  if (text) appendLogLine(text);
+}
+
+function toggleStatusBar() {
+  const bar = document.getElementById('status-bar');
+  bar.classList.toggle('expanded');
+  if (bar.classList.contains('expanded')) {
+    const log = document.getElementById('status-log');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+document.getElementById('status-bar').addEventListener('click', toggleStatusBar);
 
 // ── Local models ───────────────────────────────────────────────────────────
 
@@ -198,6 +275,7 @@ async function deleteModel(name) {
     const resp = await fetch('/api/local/' + encodeURIComponent(name), { method: 'DELETE' });
     if (resp.status === 404) { showErr('local-error', 'Model not found.'); return; }
     if (!resp.ok) throw new Error(await resp.text());
+    setStatusBar('Ready', 'Model deleted, restarting service…', false);
     fetchLocalModels();
   } catch (e) {
     showErr('local-error', 'Delete failed: ' + e.message);
@@ -247,7 +325,6 @@ function renderRepoFiles(repoId, files) {
 
 async function startDownload(repoId, filename) {
   if (downloadInProgress) return;
-  clearErr('download-error');
   try {
     const resp = await fetch('/api/download', {
       method: 'POST',
@@ -256,10 +333,11 @@ async function startDownload(repoId, filename) {
     });
     if (!resp.ok) throw new Error(await resp.text());
   } catch (e) {
-    showErr('download-error', 'Failed to start download: ' + e.message);
+    setStatusBar('Error', 'Failed to start download: ' + e.message, false);
     return;
   }
   setDownloadState(true);
+  setStatusBar('Download', 'Starting…', true);
   openSSE();
 }
 
@@ -269,16 +347,11 @@ function openSSE() {
     activeEventSource = null;
   }
 
-  const section = document.getElementById('download-section');
-  const logBox = document.getElementById('log-box');
-  section.style.display = 'block';
-  logBox.textContent = '';
-
   const es = new EventSource('/api/download/status');
   activeEventSource = es;
 
   es.addEventListener('line', (e) => {
-    appendLog(JSON.parse(e.data));
+    setStatusBar('Download', JSON.parse(e.data), true);
   });
 
   es.addEventListener('status', (e) => {
@@ -286,11 +359,11 @@ function openSSE() {
     es.close();
     activeEventSource = null;
     if (msg.status === 'done') {
-      appendLog('[download finished]');
+      setStatusBar('Ready', 'Download complete', false);
       setDownloadState(false);
       fetchLocalModels();
     } else if (msg.status === 'idle') {
-      appendLog('[no active download]');
+      setStatusBar('Ready', '', false);
       setDownloadState(false);
     }
   });
@@ -298,15 +371,9 @@ function openSSE() {
   es.onerror = () => {
     es.close();
     activeEventSource = null;
-    appendLog('[connection lost]');
+    setStatusBar('Error', 'Connection lost', false);
     setDownloadState(false);
   };
-}
-
-function appendLog(line) {
-  const logBox = document.getElementById('log-box');
-  logBox.textContent += line + '\n';
-  logBox.scrollTop = logBox.scrollHeight;
 }
 
 function setDownloadState(inProgress) {
@@ -314,6 +381,24 @@ function setDownloadState(inProgress) {
   document.querySelectorAll('.dl-btn').forEach(btn => {
     btn.disabled = inProgress;
   });
+}
+
+// ── Restart service ────────────────────────────────────────────────────────
+
+async function restartService() {
+  const btn = document.getElementById('restart-btn');
+  btn.disabled = true;
+  setStatusBar('Restart', 'Restarting llama-server…', true);
+  try {
+    const resp = await fetch('/api/restart', { method: 'POST' });
+    if (!resp.ok) throw new Error(await resp.text());
+    setStatusBar('Ready', 'Service restarted successfully', false);
+    pollStatus();
+  } catch (e) {
+    setStatusBar('Error', 'Restart failed: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Status polling ─────────────────────────────────────────────────────────
@@ -326,7 +411,6 @@ async function pollStatus() {
     const el = document.getElementById('status-indicator');
     el.textContent = s.llamaReachable ? 'llama-server: online' : 'llama-server: offline';
     el.className = s.llamaReachable ? 'status-online' : 'status-offline';
-    // Sync download state if we missed a completion event
     if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);
     }
@@ -337,6 +421,7 @@ async function pollStatus() {
 
 document.getElementById('refresh-btn').addEventListener('click', fetchLocalModels);
 document.getElementById('browse-btn').addEventListener('click', browseRepo);
+document.getElementById('restart-btn').addEventListener('click', restartService);
 document.getElementById('repo-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') browseRepo();
 });
