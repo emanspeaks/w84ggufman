@@ -6,12 +6,13 @@ import (
 )
 
 type Config struct {
-	ModelsDir        string  `json:"modelsDir"`
-	LlamaServerURL   string  `json:"llamaServerURL"`
-	LlamaService     string  `json:"llamaService"`
-	Port             int     `json:"port"`
-	HFToken          string  `json:"hfToken"`
-	WarnDownloadGiB  float64 `json:"warnDownloadGiB"`
+	ModelsDir       string            `json:"modelsDir"`
+	LlamaServerURL  string            `json:"llamaServerURL"`
+	LlamaService    string            `json:"llamaService"`
+	Port            int               `json:"port"`
+	HFToken         string            `json:"hfToken"`
+	WarnDownloadGiB float64           `json:"warnDownloadGiB"`
+	PresetGlobal    map[string]string `json:"presetGlobal"`
 }
 
 func defaultConfig() Config {
@@ -22,6 +23,12 @@ func defaultConfig() Config {
 		Port:            9293,
 		HFToken:         "",
 		WarnDownloadGiB: 10.0,
+		PresetGlobal: map[string]string{
+			"ctx-size":     "65536",
+			"flash-attn":   "on",
+			"jinja":        "true",
+			"n-gpu-layers": "999",
+		},
 	}
 }
 

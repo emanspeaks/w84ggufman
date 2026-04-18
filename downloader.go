@@ -12,12 +12,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
 type downloader struct {
 	cfg    Config
+	preset *presetManager
 	mu     sync.Mutex
 	active string
 	busy   bool
@@ -25,8 +25,8 @@ type downloader struct {
 	cancel context.CancelFunc
 }
 
-func newDownloader(cfg Config) *downloader {
-	return &downloader{cfg: cfg}
+func newDownloader(cfg Config, pm *presetManager) *downloader {
+	return &downloader{cfg: cfg, preset: pm}
 }
 
 // modelNameFromFilename strips shard suffixes and .gguf to derive a directory name.
@@ -54,9 +54,22 @@ func (d *downloader) activeInfo() (string, bool) {
 	return d.active, d.busy
 }
 
-func (d *downloader) start(repoID, filename string) error {
+func (d *downloader) cancelDownload() {
+	d.mu.Lock()
+	fn := d.cancel
+	d.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// start begins a download of filename (and optionally mmprojFile) from repoID.
+func (d *downloader) start(repoID, filename, mmprojFile string) error {
 	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
 		return fmt.Errorf("invalid filename")
+	}
+	if mmprojFile != "" && (strings.Contains(mmprojFile, "..") || strings.HasPrefix(mmprojFile, "/")) {
+		return fmt.Errorf("invalid mmproj filename")
 	}
 	modelName := modelNameFromFilename(filename)
 	if modelName == "" || strings.ContainsAny(modelName, "/\\") {
@@ -71,24 +84,19 @@ func (d *downloader) start(repoID, filename string) error {
 
 	pattern := shardPattern(filename)
 	destDir := filepath.Join(d.cfg.ModelsDir, modelName)
-	d.active = fmt.Sprintf("%s — %s", repoID, filename)
+	label := fmt.Sprintf("%s — %s", repoID, filename)
+	if mmprojFile != "" {
+		label += " + " + mmprojFile
+	}
+	d.active = label
 	d.busy = true
 	d.lines = nil
 
-	ctx, cancel := context.WithCancel(context.Background())
-	d.cancel = cancel
-	go d.run(ctx, repoID, pattern, destDir)
-	return nil
-}
+	ctx, cancelFn := context.WithCancel(context.Background())
+	d.cancel = cancelFn
 
-func (d *downloader) cancelDownload() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if !d.busy || d.cancel == nil {
-		return false
-	}
-	d.cancel()
-	return true
+	go d.run(ctx, repoID, pattern, mmprojFile, destDir, modelName)
+	return nil
 }
 
 func (d *downloader) appendLine(line string) {
@@ -97,13 +105,25 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
-func (d *downloader) run(ctx context.Context, repoID, pattern, destDir string) {
-	args := []string{"download", repoID, "--include", pattern, "--local-dir", destDir}
+func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destDir, modelName string) {
+	args := []string{"download", repoID, "--include", pattern}
+	if mmprojFile != "" {
+		args = append(args, "--include", mmprojFile)
+	}
+	args = append(args, "--local-dir", destDir)
+
 	cmd := exec.CommandContext(ctx, "hf", args...)
+	// Send SIGINT on context cancellation; WaitDelay gives the process time to
+	// clean up before SIGKILL is sent automatically.
 	cmd.Cancel = func() error {
-		return cmd.Process.Signal(syscall.SIGTERM)
+		if cmd.Process != nil {
+			return cmd.Process.Signal(os.Interrupt)
+		}
+		return nil
 	}
 	cmd.WaitDelay = 5 * time.Second
+
+
 	if d.cfg.HFToken != "" {
 		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
 	}
@@ -143,13 +163,29 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, destDir string) {
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			d.appendLine("[gguf-manager] download cancelled")
-			d.mu.Lock()
-			d.busy = false
-			d.mu.Unlock()
+		} else {
+			d.finishWithError(fmt.Errorf("hf download failed: %w", err))
 			return
 		}
-		d.finishWithError(fmt.Errorf("hf download failed: %w", err))
+		d.mu.Lock()
+		d.busy = false
+		d.cancel = nil
+		d.mu.Unlock()
 		return
+	}
+
+	// Update managed.ini with the new model entry.
+	modelPath := filepath.Join(destDir, filepath.Base(pattern))
+	// For sharded models the pattern ends in *.gguf; use the directory instead.
+	if strings.Contains(filepath.Base(pattern), "*") {
+		modelPath = destDir
+	}
+	mmprojPath := ""
+	if mmprojFile != "" {
+		mmprojPath = filepath.Join(destDir, filepath.Base(mmprojFile))
+	}
+	if err := d.preset.AddModel(modelName, modelPath, mmprojPath); err != nil {
+		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not update managed.ini: %v", err))
 	}
 
 	d.appendLine("[gguf-manager] download complete, restarting service...")
@@ -161,6 +197,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, destDir string) {
 
 	d.mu.Lock()
 	d.busy = false
+	d.cancel = nil
 	d.mu.Unlock()
 }
 
@@ -168,6 +205,7 @@ func (d *downloader) finishWithError(err error) {
 	d.mu.Lock()
 	d.lines = append(d.lines, fmt.Sprintf("[error] %v", err))
 	d.busy = false
+	d.cancel = nil
 	d.mu.Unlock()
 }
 

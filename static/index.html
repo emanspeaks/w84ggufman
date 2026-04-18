@@ -212,11 +212,39 @@
   html.light #status-bar-label { color: #94a3b8; border-right-color: #e2e8f0; }
   html.light #status-bar.active #status-bar-text { color: #0f172a; }
   html.light #status-bar-chevron { color: #cbd5e1; }
-  html.light #disk-label { color: #94a3b8; }
-  html.light .disk-bar-track { background: #e2e8f0; }
-  html.light .file-row-toobig .file-name { color: #dc2626; }
+  /* ── Disk bar ────────────────────────────────────────────────────────────── */
+  .disk-bar-wrap { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: #64748b; flex-shrink: 0; }
+  .disk-bar { height: 6px; width: 80px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+  .disk-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+  .disk-bar-fill.ok   { background: #22c55e; }
+  .disk-bar-fill.warn { background: #f59e0b; }
+  .disk-bar-fill.crit { background: #ef4444; }
+  html.light .disk-bar { background: #e2e8f0; }
+  /* ── Vision & preset badges ──────────────────────────────────────────────── */
+  .badge-vision      { background: #1e3a5f; color: #7dd3fc; }
+  .badge-warn-preset { background: #7c2d12; color: #fdba74; }
+  /* ── Oversized file row ──────────────────────────────────────────────────── */
+  .file-row-toobig .file-name,
+  .file-row-toobig .file-size { color: #f87171; }
+  html.light .file-row-toobig .file-name,
   html.light .file-row-toobig .file-size { color: #dc2626; }
-  html.light .file-row-toobig .dl-btn { background: #fee2e2; color: #dc2626; }
+  /* ── Mmproj selector ─────────────────────────────────────────────────────── */
+  .file-row-inner { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+  .vision-select-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .vision-select-row label { font-size: 0.7rem; color: #64748b; white-space: nowrap; }
+  select.mmproj-select {
+    font-size: 0.75rem; padding: 3px 6px;
+    background: #0f172a; border: 1px solid #334155; border-radius: 4px;
+    color: #f1f5f9; outline: none; max-width: 280px;
+  }
+  html.light select.mmproj-select { background: #fff; border-color: #cbd5e1; color: #0f172a; }
+  /* ── Cancel button ───────────────────────────────────────────────────────── */
+  #cancel-dl-btn {
+    display: none; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px;
+    background: #7f1d1d; color: #fca5a5; border: none; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  #cancel-dl-btn:hover { background: #991b1b; }
 </style>
 </head>
 <body>
@@ -226,9 +254,9 @@
     <span id="app-version"></span>
   </div>
   <span id="status-indicator" class="status-unknown">connecting…</span>
-  <div class="disk-info" id="disk-info" style="display:none">
-    <div class="disk-bar-track"><div id="disk-bar-fill" class="disk-bar-fill ok"></div></div>
-    <span id="disk-label"></span>
+  <div class="disk-bar-wrap" id="disk-info" style="display:none">
+    <div class="disk-bar"><div class="disk-bar-fill ok" id="disk-bar-fill" style="width:0%"></div></div>
+    <span id="disk-text"></span>
   </div>
   <button id="theme-toggle" title="Toggle light/dark mode">☀</button>
   <button class="btn-restart" id="restart-btn">Restart Service</button>
@@ -272,7 +300,7 @@
   <div id="status-bar-main">
     <span id="status-bar-label">Ready</span>
     <span id="status-bar-text"></span>
-    <button id="cancel-btn" onclick="event.stopPropagation();cancelDownload()">Cancel</button>
+    <button id="cancel-dl-btn">Cancel</button>
     <span id="status-bar-chevron">▲</span>
   </div>
 </div>
@@ -282,8 +310,8 @@
 
 let downloadInProgress = false;
 let activeEventSource = null;
-let diskAvailable = 0;
-let warnDownloadBytes = 10 * 1024 ** 3;
+let warnDownloadBytes = 0;
+let diskFreeBytes = 0;
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -407,9 +435,13 @@ function renderLocalModels(models) {
   for (const m of models) {
     const card = document.createElement('div');
     card.className = 'model-card';
+    const visionBadge = m.isVision ? ' <span class="badge badge-vision">Vision</span>' : '';
+    const presetWarn = m.isVision && !m.inPreset
+      ? ' <span class="badge badge-warn-preset" title="Not in managed.ini — add to preset so llama-server loads it">Preset missing</span>'
+      : '';
     card.innerHTML = `
       <div class="model-meta">
-        <span class="model-name">${esc(m.name)}</span>
+        <span class="model-name">${esc(m.name)}${visionBadge}${presetWarn}</span>
         <span class="model-detail">
           ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}
           &nbsp;<span class="badge ${m.loaded ? 'badge-loaded' : 'badge-unloaded'}">${m.loaded ? 'Loaded' : 'Unloaded'}</span>
@@ -447,49 +479,87 @@ async function browseRepo() {
   try {
     const resp = await fetch('/api/repo?id=' + encodeURIComponent(repoId));
     if (!resp.ok) throw new Error(await resp.text());
-    const files = await resp.json();
-    renderRepoFiles(repoId, files);
+    const info = await resp.json();
+    renderRepoInfo(repoId, info);
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to fetch repo: ' + e.message);
   }
 }
 
-function renderRepoFiles(repoId, files) {
+function defaultMmproj(mmprojFiles) {
+  const f16 = mmprojFiles.find(f => f.filename.toLowerCase().includes('f16'));
+  return (f16 || mmprojFiles[0] || {}).filename || '';
+}
+
+function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
-  if (!files.length) {
+  const files = info.models || [];
+  if (!files.length && !(info.mmproj || []).length) {
     results.innerHTML = '<p class="msg-empty">No GGUF files found in this repo.</p>';
     return;
   }
   results.innerHTML = '';
+
+  if (info.isVision) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:4px 0 8px;font-size:0.78rem;color:#7dd3fc';
+    hdr.innerHTML = '<span class="badge badge-vision">Vision model</span> &nbsp;Includes a multimodal projector (mmproj) for image understanding.';
+    results.appendChild(hdr);
+  }
+
   for (const f of files) {
-    const tooBig = diskAvailable > 0 && f.size > diskAvailable;
+    const tooBig = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
     const row = document.createElement('div');
     row.className = 'file-row' + (tooBig ? ' file-row-toobig' : '');
-    const sizeLabel = esc(formatBytes(f.size)) + (tooBig ? ' ⚠ exceeds free space' : '');
+
+    let mmprojSelectHtml = '';
+    if (info.isVision && (info.mmproj || []).length > 0) {
+      const defVal = defaultMmproj(info.mmproj);
+      const opts = info.mmproj.map(m =>
+        `<option value="${esc(m.filename)}" ${m.filename === defVal ? 'selected' : ''}>${esc(m.filename)}${m.size != null ? ' (' + formatBytes(m.size) + ')' : ''}</option>`
+      ).join('');
+      mmprojSelectHtml = `<div class="vision-select-row"><label>mmproj:</label><select class="mmproj-select">${opts}</select></div>`;
+    }
+
     row.innerHTML = `
-      <span class="file-name">${esc(f.filename)}</span>
-      <span class="file-size">${sizeLabel}</span>
+      <div class="file-row-inner">
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <span class="file-name">${esc(f.filename)}</span>
+          <span class="file-size">${esc(formatBytes(f.size))}</span>
+          ${tooBig ? '<span class="badge" style="background:#7f1d1d;color:#fca5a5">Insufficient space</span>' : ''}
+        </div>
+        ${mmprojSelectHtml}
+      </div>
       <button class="btn-primary dl-btn" ${downloadInProgress ? 'disabled' : ''}>Download</button>
     `;
-    row.querySelector('.dl-btn').addEventListener('click', () => startDownload(repoId, f.filename, f.size));
+
+    const btn = row.querySelector('.dl-btn');
+    btn.addEventListener('click', () => {
+      const sel = row.querySelector('.mmproj-select');
+      const mmprojFile = sel ? sel.value : '';
+      const totalSize = (f.size || 0) + (sel ? (info.mmproj.find(m => m.filename === sel.value)?.size || 0) : 0);
+      startDownload(repoId, f.filename, mmprojFile, totalSize);
+    });
     results.appendChild(row);
   }
 }
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-async function startDownload(repoId, filename, size) {
+async function startDownload(repoId, filename, mmprojFile, totalSize) {
   if (downloadInProgress) return;
-  if (warnDownloadBytes > 0 && size > warnDownloadBytes) {
-    const gib = (size / 1024 ** 3).toFixed(1);
-    if (!confirm(`This file is ${gib} GiB — are you sure you want to download it?`)) return;
+  if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
+    const gb = (totalSize / 1073741824).toFixed(2);
+    if (!confirm(`This download is ${gb} GB. Continue?`)) return;
   }
   try {
+    const body = { repoId, filename };
+    if (mmprojFile) body.mmprojFile = mmprojFile;
     const resp = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repoId, filename }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) throw new Error(await resp.text());
   } catch (e) {
@@ -499,6 +569,10 @@ async function startDownload(repoId, filename, size) {
   setDownloadState(true);
   setStatusBar('Download', 'Starting…', true);
   openSSE();
+}
+
+async function cancelDownload() {
+  await fetch('/api/download/cancel', { method: 'POST' });
 }
 
 function openSSE() {
@@ -538,19 +612,8 @@ function openSSE() {
 
 function setDownloadState(inProgress) {
   downloadInProgress = inProgress;
-  document.querySelectorAll('.dl-btn').forEach(btn => {
-    btn.disabled = inProgress;
-  });
-  document.getElementById('cancel-btn').style.display = inProgress ? 'inline-block' : 'none';
-}
-
-async function cancelDownload() {
-  try {
-    await fetch('/api/download/cancel', { method: 'POST' });
-    setStatusBar('Ready', 'Download cancelled', false);
-  } catch (e) {
-    setStatusBar('Error', 'Cancel failed: ' + e.message, false);
-  }
+  document.querySelectorAll('.dl-btn').forEach(btn => { btn.disabled = inProgress; });
+  document.getElementById('cancel-dl-btn').style.display = inProgress ? 'inline-block' : 'none';
 }
 
 // ── Restart service ────────────────────────────────────────────────────────
@@ -585,17 +648,16 @@ async function pollStatus() {
       const ver = document.getElementById('app-version');
       if (!ver.textContent) ver.textContent = s.version;
     }
-    if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
-    if (s.disk && s.disk.total > 0) {
-      diskAvailable = s.disk.available;
-      const used = s.disk.total - s.disk.available;
-      const pct = Math.round(used / s.disk.total * 100);
+    if (s.disk && s.disk.totalBytes > 0) {
+      diskFreeBytes = s.disk.freeBytes;
+      const pct = Math.round(s.disk.usedBytes / s.disk.totalBytes * 100);
       const fill = document.getElementById('disk-bar-fill');
       fill.style.width = pct + '%';
-      fill.className = 'disk-bar-fill ' + (pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok');
-      document.getElementById('disk-label').textContent = formatBytes(s.disk.available) + ' free';
+      fill.className = 'disk-bar-fill ' + (pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : 'ok');
+      document.getElementById('disk-text').textContent = formatBytes(s.disk.freeBytes) + ' free';
       document.getElementById('disk-info').style.display = 'flex';
     }
+    if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
     if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);
     }
@@ -607,6 +669,7 @@ async function pollStatus() {
 document.getElementById('refresh-btn').addEventListener('click', fetchLocalModels);
 document.getElementById('browse-btn').addEventListener('click', browseRepo);
 document.getElementById('restart-btn').addEventListener('click', restartService);
+document.getElementById('cancel-dl-btn').addEventListener('click', cancelDownload);
 document.getElementById('repo-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') browseRepo();
 });
