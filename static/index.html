@@ -710,6 +710,7 @@ function openSSE() {
       setStatusBar('Ready', 'Download complete', false);
       setDownloadState(false);
       fetchLocalModels();
+      pollStatus();
     } else if (msg.status === 'idle') {
       setStatusBar('Ready', '', false);
       setDownloadState(false);
