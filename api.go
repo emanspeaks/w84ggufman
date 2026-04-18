@@ -219,10 +219,10 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RepoID     string `json:"repoId"`
-		Filename   string `json:"filename"`
-		MmprojFile string `json:"mmprojFile"`
-		Force      bool   `json:"force"`
+		RepoID       string   `json:"repoId"`
+		Filename     string   `json:"filename"`
+		SidecarFiles []string `json:"sidecarFiles"`
+		Force        bool     `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -251,7 +251,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.dl.start(req.RepoID, req.Filename, req.MmprojFile, req.Force); err != nil {
+	if err := s.dl.start(req.RepoID, req.Filename, req.SidecarFiles, req.Force); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

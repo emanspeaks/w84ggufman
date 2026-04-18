@@ -16,7 +16,7 @@ type HFFile struct {
 type HFRepoInfo struct {
 	IsVision bool     `json:"isVision"`
 	Models   []HFFile `json:"models"`
-	Mmproj   []HFFile `json:"mmproj"`
+	Sidecars []HFFile `json:"sidecars"`
 }
 
 type hfModelResponse struct {
@@ -57,21 +57,29 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 			Size:        s.Size,
 			DownloadURL: "https://huggingface.co/" + repoID + "/resolve/main/" + s.Rfilename,
 		}
-		if matchesMmproj(s.Rfilename) {
-			info.Mmproj = append(info.Mmproj, f)
+		if matchesSidecar(s.Rfilename) {
+			info.Sidecars = append(info.Sidecars, f)
 		} else {
 			info.Models = append(info.Models, f)
 		}
 	}
-	info.IsVision = len(info.Mmproj) > 0
+	for _, s := range info.Sidecars {
+		if matchesMmproj(s.Filename) {
+			info.IsVision = true
+			break
+		}
+	}
 	return info, nil
 }
 
-func matchesMmproj(filename string) bool {
+func matchesSidecar(filename string) bool {
 	base := strings.ToLower(filename)
-	// Strip directory prefix if present.
 	if i := strings.LastIndex(base, "/"); i >= 0 {
 		base = base[i+1:]
 	}
 	return strings.HasPrefix(base, "mmproj-")
+}
+
+func matchesMmproj(filename string) bool {
+	return matchesSidecar(filename)
 }

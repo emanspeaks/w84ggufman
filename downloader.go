@@ -87,12 +87,14 @@ func (d *downloader) cancelDownload() {
 // start begins a download. If force is true and the model directory already
 // exists, the existing directory is renamed to <dir>.old before downloading;
 // it is restored on failure and deleted on success.
-func (d *downloader) start(repoID, filename, mmprojFile string, force bool) error {
+func (d *downloader) start(repoID, filename string, sidecarFiles []string, force bool) error {
 	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
 		return fmt.Errorf("invalid filename")
 	}
-	if mmprojFile != "" && (strings.Contains(mmprojFile, "..") || strings.HasPrefix(mmprojFile, "/")) {
-		return fmt.Errorf("invalid mmproj filename")
+	for _, sf := range sidecarFiles {
+		if strings.Contains(sf, "..") || strings.HasPrefix(sf, "/") {
+			return fmt.Errorf("invalid sidecar filename: %s", sf)
+		}
 	}
 	modelName := modelNameFromFilename(filename)
 	if modelName == "" || strings.ContainsAny(modelName, "/\\") {
@@ -120,8 +122,15 @@ func (d *downloader) start(repoID, filename, mmprojFile string, force bool) erro
 
 	pattern := shardPattern(filename)
 	label := fmt.Sprintf("%s — %s", repoID, filename)
-	if mmprojFile != "" {
-		label += " + " + mmprojFile
+	switch len(sidecarFiles) {
+	case 1:
+		label += " + " + sidecarFiles[0]
+	case 2, 3:
+		label += " + " + strings.Join(sidecarFiles, ", ")
+	default:
+		if len(sidecarFiles) > 3 {
+			label += fmt.Sprintf(" + %d companion files", len(sidecarFiles))
+		}
 	}
 	d.active = label
 	d.busy = true
@@ -130,7 +139,7 @@ func (d *downloader) start(repoID, filename, mmprojFile string, force bool) erro
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
 
-	go d.run(ctx, repoID, pattern, mmprojFile, destDir, modelName, oldDir)
+	go d.run(ctx, repoID, pattern, sidecarFiles, destDir, modelName, oldDir)
 	return nil
 }
 
@@ -140,10 +149,10 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
-func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destDir, modelName, oldDir string) {
+func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFiles []string, destDir, modelName, oldDir string) {
 	args := []string{"download", repoID, "--include", pattern}
-	if mmprojFile != "" {
-		args = append(args, "--include", mmprojFile)
+	for _, sf := range sidecarFiles {
+		args = append(args, "--include", sf)
 	}
 	args = append(args, "--local-dir", destDir)
 
@@ -228,8 +237,11 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destD
 		modelPath = destDir
 	}
 	mmprojPath := ""
-	if mmprojFile != "" {
-		mmprojPath = filepath.Join(destDir, filepath.Base(mmprojFile))
+	for _, sf := range sidecarFiles {
+		if matchesMmproj(sf) {
+			mmprojPath = filepath.Join(destDir, filepath.Base(sf))
+			break
+		}
 	}
 	if err := d.preset.AddModel(modelName, modelPath, mmprojPath); err != nil {
 		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not update managed.ini: %v", err))

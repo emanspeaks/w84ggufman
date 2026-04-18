@@ -220,16 +220,17 @@
   .file-row-toobig .file-size { color: #f87171; }
   html.light .file-row-toobig .file-name,
   html.light .file-row-toobig .file-size { color: #dc2626; }
-  /* ── Mmproj selector ─────────────────────────────────────────────────────── */
+  /* ── Sidecar checkboxes ──────────────────────────────────────────────────── */
   .file-row-inner { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
-  .vision-select-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-  .vision-select-row label { font-size: 0.7rem; color: #64748b; white-space: nowrap; }
-  select.mmproj-select {
-    font-size: 0.75rem; padding: 3px 6px;
-    background: #0f172a; border: 1px solid #334155; border-radius: 4px;
-    color: #f1f5f9; outline: none; max-width: 280px;
-  }
-  html.light select.mmproj-select { background: #fff; border-color: #cbd5e1; color: #0f172a; }
+  .sidecars-wrap { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+  .sidecars-label { font-size: 0.7rem; color: #475569; }
+  .sidecar-row { display: flex; align-items: center; gap: 5px; }
+  .sidecar-row input[type="checkbox"] { flex-shrink: 0; accent-color: #3b82f6; cursor: pointer; }
+  .sidecar-name { font-size: 0.75rem; font-family: monospace; color: #94a3b8; word-break: break-all; }
+  .sidecar-size { font-size: 0.7rem; color: #475569; white-space: nowrap; }
+  html.light .sidecars-label { color: #94a3b8; }
+  html.light .sidecar-name { color: #475569; }
+  html.light .sidecar-size { color: #94a3b8; }
   /* ── Cancel button ───────────────────────────────────────────────────────── */
   #cancel-dl-btn {
     display: none; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px;
@@ -493,15 +494,11 @@ async function browseRepo() {
   }
 }
 
-function defaultMmproj(mmprojFiles) {
-  const f16 = mmprojFiles.find(f => f.filename.toLowerCase().includes('f16'));
-  return (f16 || mmprojFiles[0] || {}).filename || '';
-}
-
 function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
-  if (!files.length && !(info.mmproj || []).length) {
+  const sidecars = info.sidecars || [];
+  if (!files.length && !sidecars.length) {
     results.innerHTML = '<p class="msg-empty">No GGUF files found in this repo.</p>';
     return;
   }
@@ -519,13 +516,16 @@ function renderRepoInfo(repoId, info) {
     const row = document.createElement('div');
     row.className = 'file-row' + (tooBig ? ' file-row-toobig' : '');
 
-    let mmprojSelectHtml = '';
-    if (info.isVision && (info.mmproj || []).length > 0) {
-      const defVal = defaultMmproj(info.mmproj);
-      const opts = info.mmproj.map(m =>
-        `<option value="${esc(m.filename)}" ${m.filename === defVal ? 'selected' : ''}>${esc(m.filename)}${m.size != null ? ' (' + formatBytes(m.size) + ')' : ''}</option>`
+    let sidecarsHtml = '';
+    if (sidecars.length > 0) {
+      const items = sidecars.map((s, i) =>
+        `<div class="sidecar-row">
+          <input type="checkbox" class="sidecar-cb" data-idx="${i}" checked>
+          <span class="sidecar-name">${esc(s.filename)}</span>
+          ${s.size != null ? `<span class="sidecar-size">${esc(formatBytes(s.size))}</span>` : ''}
+        </div>`
       ).join('');
-      mmprojSelectHtml = `<div class="vision-select-row"><label>mmproj:</label><select class="mmproj-select">${opts}</select></div>`;
+      sidecarsHtml = `<div class="sidecars-wrap"><span class="sidecars-label">Companion files:</span>${items}</div>`;
     }
 
     row.innerHTML = `
@@ -535,17 +535,17 @@ function renderRepoInfo(repoId, info) {
           <span class="file-size">${esc(formatBytes(f.size))}</span>
           ${tooBig ? '<span class="badge" style="background:#7f1d1d;color:#fca5a5">Insufficient space</span>' : ''}
         </div>
-        ${mmprojSelectHtml}
+        ${sidecarsHtml}
       </div>
       <button class="btn-primary dl-btn" ${downloadInProgress ? 'disabled' : ''}>Download</button>
     `;
 
     const btn = row.querySelector('.dl-btn');
     btn.addEventListener('click', () => {
-      const sel = row.querySelector('.mmproj-select');
-      const mmprojFile = sel ? sel.value : '';
-      const totalSize = (f.size || 0) + (sel ? (info.mmproj.find(m => m.filename === sel.value)?.size || 0) : 0);
-      startDownload(repoId, f.filename, mmprojFile, totalSize);
+      const checked = [...row.querySelectorAll('.sidecar-cb:checked')];
+      const selectedSidecars = checked.map(cb => sidecars[+cb.dataset.idx].filename);
+      const sidecarSize = checked.reduce((sum, cb) => sum + (sidecars[+cb.dataset.idx].size || 0), 0);
+      startDownload(repoId, f.filename, selectedSidecars, (f.size || 0) + sidecarSize);
     });
     results.appendChild(row);
   }
@@ -553,14 +553,14 @@ function renderRepoInfo(repoId, info) {
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-async function startDownload(repoId, filename, mmprojFile, totalSize, force) {
+async function startDownload(repoId, filename, sidecarFiles, totalSize, force) {
   if (downloadInProgress) return;
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GB. Continue?`)) return;
   }
   const body = { repoId, filename };
-  if (mmprojFile) body.mmprojFile = mmprojFile;
+  if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;
   if (force) body.force = true;
   let resp;
   try {
@@ -579,7 +579,7 @@ async function startDownload(repoId, filename, mmprojFile, totalSize, force) {
     if (conflict.conflict === 'exists') {
       const repoLine = conflict.existingRepoId ? `\nOriginally from: ${conflict.existingRepoId}` : '';
       if (!confirm(`Model "${conflict.modelName}" already exists.${repoLine}\n\nReplace it with a fresh download?`)) return;
-      return startDownload(repoId, filename, mmprojFile, totalSize, true);
+      return startDownload(repoId, filename, sidecarFiles, totalSize, true);
     }
     setStatusBar('Error', 'Download conflict: ' + (conflict.message || resp.statusText), false);
     return;
