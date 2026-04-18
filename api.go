@@ -18,13 +18,18 @@ import (
 )
 
 type server struct {
-	cfg    Config
-	dl     *downloader
-	preset *presetManager
+	cfg       Config
+	dl        *downloader
+	preset    *presetManager
+	vramBytes uint64
 }
 
 func newServer(cfg Config, dl *downloader, pm *presetManager) *server {
-	return &server{cfg: cfg, dl: dl, preset: pm}
+	vram := uint64(cfg.VramGiB * 1024 * 1024 * 1024)
+	if vram == 0 {
+		vram = detectVRAMBytes()
+	}
+	return &server{cfg: cfg, dl: dl, preset: pm, vramBytes: vram}
 }
 
 type diskInfo struct {
@@ -196,6 +201,8 @@ type statusResponse struct {
 	Version            string   `json:"version"`
 	Disk               diskInfo `json:"disk"`
 	WarnDownloadBytes  uint64   `json:"warnDownloadBytes"`
+	VramBytes          uint64   `json:"vramBytes"`
+	WarnVramBytes      uint64   `json:"warnVramBytes"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +216,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	active, inProgress := s.dl.activeInfo()
 	disk, _ := getDiskInfo(s.cfg.ModelsDir)
 	warnBytes := uint64(s.cfg.WarnDownloadGiB * 1024 * 1024 * 1024)
+	pct := s.cfg.WarnVramPercent
+	if pct <= 0 {
+		pct = 80
+	}
+	warnVram := uint64(float64(s.vramBytes) * pct / 100)
 	writeJSON(w, statusResponse{
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
@@ -216,6 +228,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Version:            version,
 		Disk:               disk,
 		WarnDownloadBytes:  warnBytes,
+		VramBytes:          s.vramBytes,
+		WarnVramBytes:      warnVram,
 	})
 }
 
