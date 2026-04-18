@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,15 @@ func detectRepoIDFromGGUF(modelDir string, files []string) string {
 		if matchesMmproj(f) || !strings.HasSuffix(f, ".gguf") {
 			continue
 		}
-		meta, err := readGGUFMeta(filepath.Join(modelDir, f))
+		path := filepath.Join(modelDir, f)
+		meta, err := readGGUFMeta(path)
 		if err != nil {
+			log.Printf("[gguf] %s: read error: %v", f, err)
 			continue
+		}
+		log.Printf("[gguf] %s: found %d string key(s)", f, len(meta))
+		for k, v := range meta {
+			log.Printf("[gguf]   %q = %q", k, v)
 		}
 		// Most specific field first — set by llama.cpp / HF quantization tools.
 		if repo := meta["general.source.huggingface.repository"]; repo != "" {
@@ -31,6 +38,7 @@ func detectRepoIDFromGGUF(modelDir string, files []string) string {
 				return repo
 			}
 		}
+		break // only need to read one file per model directory
 	}
 	return ""
 }
@@ -81,11 +89,13 @@ func readGGUFMeta(path string) (map[string]string, error) {
 		binary.Read(f, binary.LittleEndian, &tc) //nolint:errcheck
 		binary.Read(f, binary.LittleEndian, &kvCount) //nolint:errcheck
 	}
+	log.Printf("[gguf] %s: version=%d kvCount=%d", filepath.Base(path), version, kvCount)
 
 	meta := make(map[string]string)
 	for i := uint64(0); i < kvCount; i++ {
 		key, err := ggufReadString(f)
 		if err != nil {
+			log.Printf("[gguf] %s: key read error at kv[%d]: %v", filepath.Base(path), i, err)
 			return meta, nil
 		}
 		var vtype uint32
