@@ -8,6 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 )
 
 //go:embed static
@@ -30,6 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+
+	ensureManagedINI(cfg.ModelsDir)
 
 	pm := newPresetManager(cfg)
 	dl := newDownloader(cfg, pm)
@@ -58,5 +64,95 @@ func main() {
 	log.Printf("gguf-manager %s listening on %s", version, addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
+	}
+}
+
+var shardRe = regexp.MustCompile(`-\d{5}-of-\d{5}\.gguf$`)
+
+// ensureManagedINI creates modelsDir/managed.ini if it does not already exist,
+// pre-populated with entries for any model directories already on disk.
+// llama-server requires the file to be present when started with --models-preset.
+func ensureManagedINI(modelsDir string) {
+	path := filepath.Join(modelsDir, "managed.ini")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("; managed by gguf-manager\n; do not edit manually\n")
+
+	type modelEntry struct {
+		name, modelPath, mmprojPath string
+	}
+	var entries []modelEntry
+
+	if dirs, err := os.ReadDir(modelsDir); err == nil {
+		for _, d := range dirs {
+			if !d.IsDir() {
+				continue
+			}
+			dir := filepath.Join(modelsDir, d.Name())
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+
+			var modelFiles, mmprojFiles []string
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".gguf") {
+					continue
+				}
+				name := strings.ToLower(f.Name())
+				if strings.HasPrefix(name, "mmproj-") {
+					mmprojFiles = append(mmprojFiles, f.Name())
+				} else {
+					modelFiles = append(modelFiles, f.Name())
+				}
+			}
+			if len(modelFiles) == 0 {
+				continue
+			}
+
+			// Sharded models: use the directory path so llama-server auto-detects.
+			var modelPath string
+			if len(modelFiles) > 1 || shardRe.MatchString(modelFiles[0]) {
+				modelPath = dir
+			} else {
+				modelPath = filepath.Join(dir, modelFiles[0])
+			}
+
+			mmprojPath := ""
+			if len(mmprojFiles) > 0 {
+				// Prefer F16 mmproj if available.
+				chosen := mmprojFiles[0]
+				for _, f := range mmprojFiles {
+					if strings.Contains(strings.ToLower(f), "f16") {
+						chosen = f
+						break
+					}
+				}
+				mmprojPath = filepath.Join(dir, chosen)
+			}
+
+			entries = append(entries, modelEntry{d.Name(), modelPath, mmprojPath})
+		}
+	}
+
+	if len(entries) > 0 {
+		sb.WriteString("\n[global]\nctx-size = 65536\nflash-attn = on\njinja = true\nn-gpu-layers = 999\n")
+		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+		for _, e := range entries {
+			sb.WriteString("\n[" + e.name + "]\n")
+			sb.WriteString("model = " + e.modelPath + "\n")
+			if e.mmprojPath != "" {
+				sb.WriteString("mmproj = " + e.mmprojPath + "\n")
+			}
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(sb.String()), 0664); err != nil {
+		log.Printf("warning: could not create managed.ini: %v", err)
+	} else if len(entries) > 0 {
+		log.Printf("created managed.ini with %d existing model(s)", len(entries))
 	}
 }
