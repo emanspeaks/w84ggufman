@@ -299,6 +299,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		RepoID       string   `json:"repoId"`
 		Filename     string   `json:"filename"`
 		SidecarFiles []string `json:"sidecarFiles"`
+		TotalBytes   int64    `json:"totalBytes"`
 		Force        bool     `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -328,7 +329,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.dl.start(req.RepoID, req.Filename, req.SidecarFiles, req.Force); err != nil {
+	if err := s.dl.start(req.RepoID, req.Filename, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -39,6 +41,26 @@ type hfTreeEntry struct {
 	} `json:"lfs"`
 }
 
+// quantSuffixRe matches known GGUF quantization and shard suffixes so we can
+// strip them to find the base model "stem" for each filename.
+var quantSuffixRe = regexp.MustCompile(`(?i)[-_](?:Q[2-9]_[0-9K]+(?:_[MSL])?|IQ[1-4]_\w+|F16|BF16|F32|Q[0-9]+_[0-9]+)$`)
+var shardSuffixRe = regexp.MustCompile(`-\d{5}-of-\d{5}$`)
+
+// modelStem strips quantization and shard suffixes from a GGUF filename to
+// produce the base model name used for grouping.
+func modelStem(filename string) string {
+	s := strings.ToLower(strings.TrimSuffix(filepath.Base(filename), ".gguf"))
+	for {
+		n := quantSuffixRe.ReplaceAllString(s, "")
+		n = shardSuffixRe.ReplaceAllString(n, "")
+		if n == s {
+			break
+		}
+		s = n
+	}
+	return s
+}
+
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
 	if err != nil {
@@ -65,10 +87,14 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	// The tree API returns lfs.size which is the actual file size.
 	treeSizes := fetchTreeSizes(repoID, token)
 
-	info := &HFRepoInfo{
-		PipelineTag: model.PipelineTag,
-		Tags:        model.Tags,
+	// Group all GGUF files by their model stem. The stem is the filename with
+	// quantization and shard suffixes stripped. Files sharing the most common
+	// stem are the main model quants; everything else is a companion sidecar.
+	type stemGroup struct {
+		files []HFFile
 	}
+	stemMap := map[string]*stemGroup{}
+	stemOrder := []string{} // preserve insertion order for stable output
 	for _, s := range model.Siblings {
 		if !strings.HasSuffix(s.Rfilename, ".gguf") {
 			continue
@@ -82,12 +108,37 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 			Size:        size,
 			DownloadURL: "https://huggingface.co/" + repoID + "/resolve/main/" + s.Rfilename,
 		}
-		if matchesSidecar(s.Rfilename) {
-			info.Sidecars = append(info.Sidecars, f)
-		} else {
-			info.Models = append(info.Models, f)
+		stem := modelStem(s.Rfilename)
+		if _, exists := stemMap[stem]; !exists {
+			stemOrder = append(stemOrder, stem)
+			stemMap[stem] = &stemGroup{}
+		}
+		stemMap[stem].files = append(stemMap[stem].files, f)
+	}
+
+	// The stem with the most files is the primary model group.
+	bestStem := ""
+	bestCount := 0
+	for _, stem := range stemOrder {
+		if n := len(stemMap[stem].files); n > bestCount || (n == bestCount && stem < bestStem) {
+			bestCount = n
+			bestStem = stem
 		}
 	}
+
+	info := &HFRepoInfo{
+		PipelineTag: model.PipelineTag,
+		Tags:        model.Tags,
+	}
+	for _, stem := range stemOrder {
+		g := stemMap[stem]
+		if stem == bestStem {
+			info.Models = append(info.Models, g.files...)
+		} else {
+			info.Sidecars = append(info.Sidecars, g.files...)
+		}
+	}
+
 	// Detect vision from companion files.
 	for _, s := range info.Sidecars {
 		if matchesMmproj(s.Filename) {
@@ -148,14 +199,7 @@ func fetchTreeSizes(repoID, token string) map[string]int64 {
 	return sizes
 }
 
-func matchesSidecar(filename string) bool {
-	base := strings.ToLower(filename)
-	if i := strings.LastIndex(base, "/"); i >= 0 {
-		base = base[i+1:]
-	}
-	return strings.HasPrefix(base, "mmproj-") || strings.Contains(base, "imatrix")
-}
-
 func matchesMmproj(filename string) bool {
-	return matchesSidecar(filename)
+	base := strings.ToLower(filepath.Base(filename))
+	return strings.HasPrefix(base, "mmproj-")
 }

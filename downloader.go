@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -60,14 +61,38 @@ func readModelMeta(dir string) modelMeta {
 	return m
 }
 
+type progressInfo struct {
+	Pct     int   `json:"pct"`     // 0–100; -1 when total is unknown
+	Speed   int64 `json:"speed"`   // bytes/sec
+	ETA     int   `json:"eta"`     // seconds remaining; -1 when unknown
+	DLBytes int64 `json:"dlBytes"` // bytes downloaded so far
+}
+
 type downloader struct {
-	cfg    Config
-	preset *presetManager
-	mu     sync.Mutex
-	active string
-	busy   bool
-	lines  []string
-	cancel context.CancelFunc
+	cfg        Config
+	preset     *presetManager
+	mu         sync.Mutex
+	active     string
+	busy       bool
+	lines      []string
+	cancel     context.CancelFunc
+	totalBytes int64
+	progress   *progressInfo
+}
+
+// dirSize returns the total size of all regular files under path.
+func dirSize(path string) int64 {
+	var total int64
+	filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func newDownloader(cfg Config, pm *presetManager) *downloader {
@@ -111,7 +136,7 @@ func (d *downloader) cancelDownload() {
 // start begins a download. If force is true and the model directory already
 // exists, the existing directory is renamed to <dir>.old before downloading;
 // it is restored on failure and deleted on success.
-func (d *downloader) start(repoID, filename string, sidecarFiles []string, force bool) error {
+func (d *downloader) start(repoID, filename string, sidecarFiles []string, totalBytes int64, force bool) error {
 	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
 		return fmt.Errorf("invalid filename")
 	}
@@ -159,6 +184,8 @@ func (d *downloader) start(repoID, filename string, sidecarFiles []string, force
 	d.active = label
 	d.busy = true
 	d.lines = nil
+	d.totalBytes = totalBytes
+	d.progress = nil
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
@@ -222,6 +249,55 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		return
 	}
 
+	// Watch the destination directory size to report byte-level progress.
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		startTime := time.Now()
+		var lastBytes int64
+		var lastMeasure time.Time
+		for range ticker.C {
+			d.mu.Lock()
+			busy := d.busy
+			total := d.totalBytes
+			d.mu.Unlock()
+			if !busy {
+				return
+			}
+			now := time.Now()
+			cur := dirSize(destDir)
+			speed := int64(0)
+			if !lastMeasure.IsZero() {
+				dt := now.Sub(lastMeasure).Seconds()
+				if dt > 0 && cur > lastBytes {
+					speed = int64(float64(cur-lastBytes) / dt)
+				}
+			}
+			// Fall back to average speed when instantaneous is zero.
+			if speed == 0 {
+				if elapsed := time.Since(startTime).Seconds(); elapsed > 0 {
+					speed = int64(float64(cur) / elapsed)
+				}
+			}
+			lastBytes = cur
+			lastMeasure = now
+			pct := -1
+			eta := -1
+			if total > 0 {
+				pct = int(float64(cur) / float64(total) * 100)
+				if pct > 99 {
+					pct = 99
+				}
+				if speed > 0 && cur < total {
+					eta = int(float64(total-cur) / float64(speed))
+				}
+			}
+			d.mu.Lock()
+			d.progress = &progressInfo{Pct: pct, Speed: speed, ETA: eta, DLBytes: cur}
+			d.mu.Unlock()
+		}
+	}()
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -258,6 +334,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		d.mu.Lock()
 		d.busy = false
 		d.cancel = nil
+		d.progress = nil
 		d.mu.Unlock()
 		return
 	}
@@ -297,6 +374,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	d.mu.Lock()
 	d.busy = false
 	d.cancel = nil
+	d.progress = nil
 	d.mu.Unlock()
 }
 
@@ -318,6 +396,7 @@ func (d *downloader) finishWithError(err error) {
 	d.lines = append(d.lines, fmt.Sprintf("[error] %v", err))
 	d.busy = false
 	d.cancel = nil
+	d.progress = nil
 	d.mu.Unlock()
 }
 
@@ -354,10 +433,16 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		snapshot := make([]string, len(d.lines))
 		copy(snapshot, d.lines)
 		busy := d.busy
+		prog := d.progress
 		d.mu.Unlock()
 
 		for ; sent < len(snapshot); sent++ {
 			writeSSEEvent(w, "line", snapshot[sent])
+			flusher.Flush()
+		}
+
+		if prog != nil {
+			writeSSEEvent(w, "progress", prog)
 			flusher.Flush()
 		}
 
