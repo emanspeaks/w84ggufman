@@ -21,10 +21,16 @@ var staticFiles embed.FS
 // version is injected at build time via -ldflags "-X main.version=..."
 var version = "dev"
 
+// verbose controls whether high-frequency polling endpoints (e.g. GET /api/status)
+// are included in the request log.
+var verbose bool
+
 func main() {
 	configPath := flag.String("config", "", "path to JSONC config file")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	verboseFlag := flag.Bool("verbose", false, "log all API requests including polling endpoints")
 	flag.Parse()
+	verbose = *verboseFlag
 
 	if *showVersion {
 		fmt.Println(version)
@@ -88,17 +94,21 @@ func (sw *statusWriter) Flush() {
 }
 
 // logRequests logs every /api/ request to the system logger with method, path,
-// status code, and elapsed time.
+// status code, and elapsed time. High-frequency polling endpoints like
+// GET /api/status are suppressed unless --verbose is set.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
+		quiet := !verbose && r.Method == http.MethodGet && r.URL.Path == "/api/status"
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		next.ServeHTTP(sw, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, sw.status, time.Since(start).Round(time.Millisecond))
+		if !quiet {
+			log.Printf("%s %s %d %s", r.Method, r.URL.Path, sw.status, time.Since(start).Round(time.Millisecond))
+		}
 	})
 }
 
@@ -114,7 +124,7 @@ func ensureManagedINI(modelsDir string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("; managed by w84ggufman\n; do not edit manually\n")
+	sb.WriteString("; managed by w84ggufman — manual edits are preserved\n")
 
 	type modelEntry struct {
 		name, modelPath, mmprojPath string
@@ -174,7 +184,7 @@ func ensureManagedINI(modelsDir string) {
 	}
 
 	if len(entries) > 0 {
-		sb.WriteString("\n[global]\nctx-size = 65536\nflash-attn = on\njinja = true\nn-gpu-layers = 999\n")
+		sb.WriteString("\n[*]\nctx-size = 65536\nflash-attn = on\njinja = true\nn-gpu-layers = 999\n")
 		sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 		for _, e := range entries {
 			sb.WriteString("\n[" + e.name + "]\n")
