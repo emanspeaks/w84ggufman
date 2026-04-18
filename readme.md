@@ -58,8 +58,69 @@ pass it with `--config`:
   "port": 9293,
 
   // Optional HuggingFace token for private repos or higher rate limits
-  "hfToken": ""
+  "hfToken": "",
+
+  // Warn before downloading files larger than this (0 = disabled)
+  "warnDownloadGiB": 10.0,
+
+  // Total GPU/unified memory available to the model in GiB.
+  // 0 = auto-detect via nvidia-smi / AMD sysfs / Apple sysctl.
+  // On systems with dynamically allocated unified memory (AMD APU with TTM
+  // pages_limit, etc.) auto-detection reads the hardware total rather than
+  // the active allocation, so set this manually to your actual limit.
+  "vramGiB": 0,
+
+  // Quant tiles whose total size exceeds this % of vramGiB are highlighted
+  // with an amber warning, and the download confirmation dialog is shown.
+  // Default: 80. Set to 0 to disable.
+  "warnVramPercent": 80
 }
+```
+
+## VRAM / memory warnings
+
+When `vramGiB` is known (either auto-detected or set in config), quant tiles in
+the model browser are colour-coded:
+
+| Tile style | Meaning |
+|---|---|
+| Normal | Fits comfortably within VRAM |
+| Amber border + ⚠ | Exceeds `warnVramPercent`% of your VRAM (default 80%) |
+| Greyed out | Would exceed free disk space |
+
+A confirmation dialog is shown before starting a download that exceeds the VRAM
+threshold.
+
+### AMD APU / unified memory and TTM
+
+On AMD APUs (and similar unified-memory GPUs) the kernel TTM subsystem manages a
+shared memory pool whose size is set at boot via kernel parameters rather than
+fixed hardware. The sysfs file that reports total VRAM
+(`/sys/class/drm/card*/device/mem_info_vram_total`) reflects the full hardware
+DRAM capacity, **not** your TTM allocation limit. Auto-detection therefore
+over-reports your usable VRAM.
+
+Set your allocation explicitly:
+
+```sh
+# Typical TTM kernel params (in your bootloader / NixOS boot.kernelParams):
+#   ttm.pages_limit=30000000   (pages × 4 KiB = ~114.4 GiB)
+#   ttm.page_pool_size=30000000
+#
+# Convert: pages_limit × 4096 ÷ 1024³ = GiB
+python3 -c "print(30_000_000 * 4096 / 1024**3, 'GiB')"
+# → 114.44 GiB
+```
+
+Then set `vramGiB` to that value in your config or NixOS module option.
+
+In NixOS, `boot.kernelParams` controls these at build time:
+
+```nix
+boot.kernelParams = [
+  "ttm.pages_limit=30000000"
+  "ttm.page_pool_size=30000000"
+];
 ```
 
 ## Polkit setup
@@ -144,6 +205,12 @@ Add w84ggufman as a flake input and import the NixOS module:
             llamaServerURL = "http://localhost:9292";
             llamaService   = "llama-cpp.service";
             # hfToken = "hf_...";  # see note below about secrets
+
+            # VRAM warnings — set vramGiB manually when using unified memory
+            # with a dynamic TTM allocation (AMD APU, etc.); auto-detection
+            # reads the hardware total, not your pages_limit allocation.
+            # vramGiB        = 115.0;  # your TTM allocation in GiB
+            # warnVramPercent = 80;    # default; warn above 80% of vramGiB
           };
         }
       ];

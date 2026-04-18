@@ -9,6 +9,8 @@ let
     port              = cfg.port;
     hfToken           = cfg.hfToken;
     warnDownloadGiB   = cfg.warnDownloadGiB;
+    vramGiB           = cfg.vramGiB;
+    warnVramPercent   = cfg.warnVramPercent;
   });
 in {
   options.services.w84ggufman = {
@@ -59,6 +61,24 @@ in {
       type    = lib.types.float;
       default = 10.0;
       description = "Prompt for confirmation before downloading files larger than this many GiB. Set to 0 to disable.";
+    };
+
+    vramGiB = lib.mkOption {
+      type    = lib.types.float;
+      default = 0.0;
+      description = ''
+        Total GPU/unified memory available to the model in GiB.
+        Set to 0 (the default) to attempt auto-detection via nvidia-smi, AMD sysfs,
+        or Apple sysctl. On Linux systems with dynamically allocated unified memory
+        (e.g. AMD APU with TTM pages_limit), auto-detection reads the hardware total
+        rather than the active allocation limit, so you should set this manually.
+      '';
+    };
+
+    warnVramPercent = lib.mkOption {
+      type    = lib.types.float;
+      default = 80.0;
+      description = "Quant tiles whose total size exceeds this percentage of vramGiB (or detected VRAM) are highlighted with a warning. Set to 0 to disable.";
     };
 
     serviceUser = lib.mkOption {
