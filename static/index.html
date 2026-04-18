@@ -113,15 +113,47 @@
   }
   input[type="text"]::placeholder { color: #475569; }
   input[type="text"]:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
-  /* ── File list ───────────────────────────────────────────────────────── */
+  /* ── Quant grid ─────────────────────────────────────────────────────── */
   #repo-results { display: flex; flex-direction: column; gap: 0; }
-  .file-row {
-    display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.5rem 0; border-bottom: 1px solid #334155;
+  .quant-grid {
+    border: 1px solid #1e293b; border-radius: 6px;
+    overflow: hidden; margin: 6px 0;
   }
-  .file-row:last-child { border-bottom: none; }
-  .file-name { font-size: 0.8rem; font-family: monospace; flex: 1; word-break: break-all; color: #cbd5e1; }
-  .file-size { font-size: 0.75rem; color: #475569; white-space: nowrap; }
+  .quant-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border-bottom: 1px solid #1e293b;
+  }
+  .quant-row:last-child { border-bottom: none; }
+  .quant-bit-label {
+    width: 3.5rem; font-size: 0.68rem; color: #475569;
+    flex-shrink: 0; text-align: right; padding-right: 4px;
+  }
+  .quant-tiles { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
+  .quant-tile {
+    display: inline-flex; align-items: center; gap: 0;
+    border: 1px solid #334155; border-radius: 4px;
+    font-size: 0.7rem; font-family: monospace; color: #94a3b8;
+    cursor: pointer; transition: border-color 0.12s, background 0.12s, color 0.12s;
+    overflow: hidden;
+  }
+  .quant-tile:hover { border-color: #64748b; color: #e2e8f0; }
+  .quant-tile.selected { border-color: #3b82f6; background: rgba(59,130,246,0.15); color: #93c5fd; }
+  .quant-tile.toobig { border-color: #7f1d1d; color: #9b4444; cursor: default; opacity: 0.7; }
+  .quant-tile-name { padding: 3px 6px; font-weight: 500; }
+  .quant-tile-size {
+    padding: 3px 6px; font-size: 0.62rem; color: #475569;
+    border-left: 1px solid #334155; background: rgba(0,0,0,0.15);
+  }
+  .quant-tile.selected .quant-tile-size { border-color: rgba(59,130,246,0.4); color: #64748b; }
+  /* ── Companion files ─────────────────────────────────────────────────── */
+  .companion-section { margin: 8px 0 4px; }
+  .companion-section > .sidecars-label { display: block; margin-bottom: 4px; }
+  /* ── Download row ───────────────────────────────────────────────────── */
+  .dl-action-row {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 0.75rem; padding: 8px 0 2px;
+  }
+  .dl-selection-hint { font-size: 0.72rem; color: #475569; flex: 1; }
   /* ── Messages ────────────────────────────────────────────────────────── */
   .msg-error   { color: #f87171; font-size: 0.825rem; margin-top: 0.5rem; }
   .msg-empty   { color: #475569; font-size: 0.825rem; font-style: italic; text-align: center; padding: 1rem 0; }
@@ -230,11 +262,14 @@
   /* ── Vision & preset badges ──────────────────────────────────────────────── */
   .badge-vision      { background: #1e3a5f; color: #7dd3fc; }
   .badge-warn-preset { background: #7c2d12; color: #fdba74; }
-  /* ── Oversized file row ──────────────────────────────────────────────────── */
-  .file-row-toobig .file-name,
-  .file-row-toobig .file-size { color: #f87171; }
-  html.light .file-row-toobig .file-name,
-  html.light .file-row-toobig .file-size { color: #dc2626; }
+  html.light .quant-grid { border-color: #e2e8f0; }
+  html.light .quant-row { border-color: #e2e8f0; }
+  html.light .quant-bit-label { color: #94a3b8; }
+  html.light .quant-tile { border-color: #cbd5e1; color: #475569; }
+  html.light .quant-tile:hover { border-color: #94a3b8; color: #0f172a; }
+  html.light .quant-tile.selected { border-color: #3b82f6; color: #1d4ed8; }
+  html.light .quant-tile-size { color: #94a3b8; background: rgba(0,0,0,0.04); border-color: #e2e8f0; }
+  html.light .dl-selection-hint { color: #94a3b8; }
   /* ── Sidecar checkboxes ──────────────────────────────────────────────────── */
   .file-row-inner { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
   .sidecars-wrap { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
@@ -592,6 +627,42 @@ async function browseRepo() {
   }
 }
 
+// ── Quant grid helpers ──────────────────────────────────────────────────────
+
+function commonPrefix(arr) {
+  if (!arr.length) return '';
+  return arr.slice(1).reduce((p, s) => {
+    while (!s.startsWith(p)) p = p.slice(0, -1);
+    return p;
+  }, arr[0]);
+}
+
+// Extract the display label for a quant tile (the part after the model prefix).
+function quantDisplayName(filename, prefix) {
+  const base = filename.replace(/\.gguf$/i, '');
+  const tail = base.startsWith(prefix) ? base.slice(prefix.length).replace(/^[-_]/, '') : base;
+  return tail || base;
+}
+
+// Source: https://github.com/huggingface/huggingface.js/blob/main/packages/tasks/src/gguf.ts
+const QUANT_BITS = {
+  IQ1_S:1, IQ1_M:1, TQ1_0:1, TQ2_0:2, Q1_0:1,
+  Q2_K_XL:2, Q2_K:2, Q2_K_S:2, IQ2_M:2, IQ2_S:2, IQ2_XS:2, IQ2_XXS:2,
+  Q3_K_XL:3, Q3_K_L:3, Q3_K_M:3, Q3_K_S:3, IQ3_M:3, IQ3_S:3, IQ3_XS:3, IQ3_XXS:3,
+  Q4_K_XL:4, Q4_K_M:4, Q4_K_S:4, IQ4_NL:4, IQ4_XS:4,
+  Q4_0_4_4:4, Q4_0_4_8:4, Q4_0_8_8:4, Q4_1_SOME_F16:4, Q4_0:4, Q4_1:4, Q4_2:4, Q4_3:4,
+  MXFP4_MOE:4, NVFP4:4,
+  Q5_K_XL:5, Q5_K_M:5, Q5_K_S:5, Q5_0:5, Q5_1:5,
+  Q6_K_XL:6, Q6_K:6,
+  Q8_K_XL:8, Q8_0:8,
+  BF16:16, F16:16,
+  F32:32,
+};
+function quantBitDepth(displayName) {
+  const normalized = displayName.replace(/^UD-/i, '').toUpperCase();
+  return QUANT_BITS[normalized] ?? 999;
+}
+
 function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
@@ -626,55 +697,130 @@ function renderRepoInfo(repoId, info) {
     results.appendChild(hdr);
   }
 
-  for (const f of files) {
-    const tooBig = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
-    const row = document.createElement('div');
-    row.className = 'file-row' + (tooBig ? ' file-row-toobig' : '');
+  if (files.length) {
+    // Compute display prefix: common prefix of all base filenames (without .gguf).
+    const bases = files.map(f => f.filename.replace(/\.gguf$/i, ''));
+    const prefix = commonPrefix(bases).replace(/[-_]+$/, '');
 
-    let sidecarsHtml = '';
+    // Group files by bit-depth for the grid rows.
+    const byBit = new Map();
+    for (const f of files) {
+      const label = quantDisplayName(f.filename, prefix);
+      const bits  = quantBitDepth(label);
+      if (!byBit.has(bits)) byBit.set(bits, []);
+      byBit.get(bits).push({ f, label });
+    }
+    const sortedBits = [...byBit.keys()].sort((a, b) => a - b);
+
+    // Track which filenames are selected.
+    const selected = new Set();
+
+    const grid = document.createElement('div');
+    grid.className = 'quant-grid';
+
+    for (const bits of sortedBits) {
+      const group = byBit.get(bits);
+      const row = document.createElement('div');
+      row.className = 'quant-row';
+
+      const bitLabel = document.createElement('span');
+      bitLabel.className = 'quant-bit-label';
+      bitLabel.textContent = bits === 999 ? '?' : bits + '-bit';
+      row.appendChild(bitLabel);
+
+      const tilesWrap = document.createElement('div');
+      tilesWrap.className = 'quant-tiles';
+
+      for (const { f, label } of group) {
+        const tooBig = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
+        const tile = document.createElement('span');
+        tile.className = 'quant-tile' + (tooBig ? ' toobig' : '');
+        tile.title = f.filename;
+        tile.innerHTML =
+          `<span class="quant-tile-name">${esc(label)}</span>` +
+          `<span class="quant-tile-size">${esc(formatBytes(f.size))}</span>`;
+
+        tile.addEventListener('click', () => {
+          if (selected.has(f.filename)) {
+            selected.delete(f.filename);
+            tile.classList.remove('selected');
+          } else {
+            selected.add(f.filename);
+            tile.classList.add('selected');
+          }
+          refreshDlBtn();
+        });
+        tilesWrap.appendChild(tile);
+      }
+      row.appendChild(tilesWrap);
+      grid.appendChild(row);
+    }
+    results.appendChild(grid);
+
+    // Companion files section (shared across all quants).
+    let companionEl = null;
     if (sidecars.length > 0) {
+      companionEl = document.createElement('div');
+      companionEl.className = 'companion-section';
       const items = sidecars.map((s, i) =>
         `<div class="sidecar-row">
-          <input type="checkbox" class="sidecar-cb" data-idx="${i}" checked>
+          <input type="checkbox" class="sidecar-cb" data-idx="${i}">
           <span class="sidecar-name">${esc(s.filename)}</span>
           ${s.size != null ? `<span class="sidecar-size">${esc(formatBytes(s.size))}</span>` : ''}
         </div>`
       ).join('');
-      sidecarsHtml = `<div class="sidecars-wrap"><span class="sidecars-label">Companion files:</span>${items}</div>`;
+      companionEl.innerHTML = `<span class="sidecars-label">Additional files:</span><div class="sidecars-wrap">${items}</div>`;
+      results.appendChild(companionEl);
     }
 
-    row.innerHTML = `
-      <div class="file-row-inner">
-        <div style="display:flex;align-items:center;gap:0.5rem">
-          <span class="file-name">${esc(f.filename)}</span>
-          <span class="file-size">${esc(formatBytes(f.size))}</span>
-          ${tooBig ? '<span class="badge" style="background:#7f1d1d;color:#fca5a5">Insufficient space</span>' : ''}
-        </div>
-        ${sidecarsHtml}
-      </div>
-      <button class="btn-primary dl-btn" ${downloadInProgress ? 'disabled' : ''}>Download</button>
-    `;
+    // Single download button row at the bottom.
+    const dlRow = document.createElement('div');
+    dlRow.className = 'dl-action-row';
+    const hint = document.createElement('span');
+    hint.className = 'dl-selection-hint';
+    hint.textContent = 'Select one or more quants above';
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'btn-primary';
+    dlBtn.disabled = true;
+    dlBtn.textContent = 'Download';
 
-    const btn = row.querySelector('.dl-btn');
-    btn.addEventListener('click', () => {
-      const checked = [...row.querySelectorAll('.sidecar-cb:checked')];
-      const selectedSidecars = checked.map(cb => sidecars[+cb.dataset.idx].filename);
-      const sidecarSize = checked.reduce((sum, cb) => sum + (sidecars[+cb.dataset.idx].size || 0), 0);
-      startDownload(repoId, f.filename, selectedSidecars, (f.size || 0) + sidecarSize);
+    function refreshDlBtn() {
+      const n = selected.size;
+      dlBtn.disabled = downloadInProgress || n === 0;
+      hint.textContent = n === 0 ? 'Select one or more quants above'
+        : n === 1 ? '1 quant selected'
+        : n + ' quants selected';
+      dlBtn.textContent = n > 1 ? `Download (${n})` : 'Download';
+    }
+
+    dlBtn.addEventListener('click', () => {
+      const selFiles = files.filter(f => selected.has(f.filename));
+      const checkedSidecars = companionEl
+        ? [...companionEl.querySelectorAll('.sidecar-cb:checked')].map(cb => sidecars[+cb.dataset.idx].filename)
+        : [];
+      const sidecarSize = companionEl
+        ? [...companionEl.querySelectorAll('.sidecar-cb:checked')].reduce((s, cb) => s + (sidecars[+cb.dataset.idx].size || 0), 0)
+        : 0;
+      const totalSize = selFiles.reduce((s, f) => s + (f.size || 0), 0) + sidecarSize;
+      startDownload(repoId, selFiles.map(f => f.filename), checkedSidecars, totalSize);
     });
-    results.appendChild(row);
+
+    dlRow.appendChild(hint);
+    dlRow.appendChild(dlBtn);
+    results.appendChild(dlRow);
   }
 }
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-async function startDownload(repoId, filename, sidecarFiles, totalSize, force) {
+async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) {
   if (downloadInProgress) return;
+  if (!Array.isArray(filenames)) filenames = [filenames]; // compat
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GB. Continue?`)) return;
   }
-  const body = { repoId, filename, totalBytes: totalSize || 0 };
+  const body = { repoId, filenames, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;
   if (force) body.force = true;
   let resp;
@@ -694,7 +840,7 @@ async function startDownload(repoId, filename, sidecarFiles, totalSize, force) {
     if (conflict.conflict === 'exists') {
       const repoLine = conflict.existingRepoId ? `\nOriginally from: ${conflict.existingRepoId}` : '';
       if (!confirm(`Model "${conflict.modelName}" already exists.${repoLine}\n\nReplace it with a fresh download?`)) return;
-      return startDownload(repoId, filename, sidecarFiles, totalSize, true);
+      return startDownload(repoId, filenames, sidecarFiles, totalSize, true);
     }
     setStatusBar('Error', 'Download conflict: ' + (conflict.message || resp.statusText), false);
     return;

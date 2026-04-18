@@ -133,21 +133,62 @@ func (d *downloader) cancelDownload() {
 	}
 }
 
+// modelDirName derives the local directory name for a set of files being
+// downloaded together. For a single file it uses the existing behaviour
+// (strip .gguf and shard suffix). For multiple files it finds the common
+// prefix of all stems and strips trailing separators so that, for example,
+// ["Model-Q4_K_M.gguf","Model-Q8_0.gguf"] maps to the directory "Model".
+func modelDirName(filenames []string) string {
+	if len(filenames) == 0 {
+		return ""
+	}
+	if len(filenames) == 1 {
+		return modelNameFromFilename(filenames[0])
+	}
+	stems := make([]string, len(filenames))
+	for i, f := range filenames {
+		stems[i] = strings.ToLower(modelNameFromFilename(f))
+	}
+	pfxLen := len(stems[0])
+	for _, s := range stems[1:] {
+		if len(s) < pfxLen {
+			pfxLen = len(s)
+		}
+		for i := 0; i < pfxLen; i++ {
+			if stems[0][i] != s[i] {
+				pfxLen = i
+				break
+			}
+		}
+	}
+	first := modelNameFromFilename(filenames[0])
+	name := strings.TrimRight(first[:pfxLen], "-_")
+	if name == "" {
+		name = first
+	}
+	return name
+}
+
 // start begins a download. If force is true and the model directory already
 // exists, the existing directory is renamed to <dir>.old before downloading;
 // it is restored on failure and deleted on success.
-func (d *downloader) start(repoID, filename string, sidecarFiles []string, totalBytes int64, force bool) error {
-	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
-		return fmt.Errorf("invalid filename")
+func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, force bool) error {
+	if len(filenames) == 0 {
+		return fmt.Errorf("at least one filename is required")
+	}
+	for _, filename := range filenames {
+		if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
+			return fmt.Errorf("invalid filename: %s", filename)
+		}
 	}
 	for _, sf := range sidecarFiles {
 		if strings.Contains(sf, "..") || strings.HasPrefix(sf, "/") {
 			return fmt.Errorf("invalid sidecar filename: %s", sf)
 		}
 	}
-	modelName := modelNameFromFilename(filename)
+	modelName := modelDirName(filenames)
 	if modelName == "" || strings.ContainsAny(modelName, "/\\") {
-		return fmt.Errorf("could not derive valid model name from filename")
+		return fmt.Errorf("could not derive valid model name from filenames")
 	}
 
 	d.mu.Lock()
@@ -169,8 +210,14 @@ func (d *downloader) start(repoID, filename string, sidecarFiles []string, total
 		}
 	}
 
-	pattern := shardPattern(filename)
-	label := fmt.Sprintf("%s — %s", repoID, filename)
+	patterns := make([]string, len(filenames))
+	for i, f := range filenames {
+		patterns[i] = shardPattern(f)
+	}
+	label := fmt.Sprintf("%s — %s", repoID, filenames[0])
+	if len(filenames) > 1 {
+		label = fmt.Sprintf("%s — %d quants", repoID, len(filenames))
+	}
 	switch len(sidecarFiles) {
 	case 1:
 		label += " + " + sidecarFiles[0]
@@ -190,7 +237,7 @@ func (d *downloader) start(repoID, filename string, sidecarFiles []string, total
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
 
-	go d.run(ctx, repoID, pattern, sidecarFiles, destDir, modelName, oldDir)
+	go d.run(ctx, repoID, patterns, sidecarFiles, destDir, modelName, oldDir)
 	return nil
 }
 
@@ -200,15 +247,18 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
-func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFiles []string, destDir, modelName, oldDir string) {
-	args := []string{"download", repoID, "--include", pattern}
+func (d *downloader) run(ctx context.Context, repoID string, patterns []string, sidecarFiles []string, destDir, modelName, oldDir string) {
+	args := []string{"download", repoID}
+	for _, p := range patterns {
+		args = append(args, "--include", p)
+	}
 	for _, sf := range sidecarFiles {
 		args = append(args, "--include", sf)
 	}
 	args = append(args, "--local-dir", destDir)
 
 	d.appendLine(fmt.Sprintf("[w84ggufman] repo: %s", repoID))
-	d.appendLine(fmt.Sprintf("[w84ggufman] file: %s", pattern))
+	d.appendLine(fmt.Sprintf("[w84ggufman] files: %s", strings.Join(patterns, ", ")))
 	if len(sidecarFiles) > 0 {
 		d.appendLine(fmt.Sprintf("[w84ggufman] companions: %s", strings.Join(sidecarFiles, ", ")))
 	}
@@ -349,9 +399,10 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		}
 	}
 
-	modelPath := filepath.Join(destDir, filepath.Base(pattern))
-	if strings.Contains(filepath.Base(pattern), "*") {
-		modelPath = destDir
+	// Use destDir when multiple files are downloaded or the pattern is a glob.
+	modelPath := destDir
+	if len(patterns) == 1 && !strings.Contains(patterns[0], "*") {
+		modelPath = filepath.Join(destDir, patterns[0])
 	}
 	mmprojPath := ""
 	for _, sf := range sidecarFiles {

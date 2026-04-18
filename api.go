@@ -297,7 +297,7 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepoID       string   `json:"repoId"`
-		Filename     string   `json:"filename"`
+		Filenames    []string `json:"filenames"`
 		SidecarFiles []string `json:"sidecarFiles"`
 		TotalBytes   int64    `json:"totalBytes"`
 		Force        bool     `json:"force"`
@@ -306,13 +306,13 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.RepoID == "" || req.Filename == "" {
-		http.Error(w, "repoId and filename are required", http.StatusBadRequest)
+	if req.RepoID == "" || len(req.Filenames) == 0 {
+		http.Error(w, "repoId and filenames are required", http.StatusBadRequest)
 		return
 	}
 
 	if !req.Force {
-		modelName := modelNameFromFilename(req.Filename)
+		modelName := modelDirName(req.Filenames)
 		if modelName != "" {
 			destDir := filepath.Join(s.cfg.ModelsDir, modelName)
 			if _, err := os.Stat(destDir); err == nil {
@@ -329,7 +329,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.dl.start(req.RepoID, req.Filename, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
+	if err := s.dl.start(req.RepoID, req.Filenames, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
