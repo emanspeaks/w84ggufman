@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 
 	"github.com/emanspeaks/gguf-manager/internal/ini"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
 
 type server struct {
@@ -204,6 +207,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var mdRenderer = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
 func (s *server) handleReadme(w http.ResponseWriter, r *http.Request) {
 	repoID := r.URL.Query().Get("id")
 	if repoID == "" {
@@ -237,8 +242,32 @@ func (s *server) handleReadme(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "HuggingFace returned non-OK status", http.StatusBadGateway)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read readme", http.StatusInternalServerError)
+		return
+	}
+	raw = stripFrontmatter(raw)
+	var buf bytes.Buffer
+	if err := mdRenderer.Convert(raw, &buf); err != nil {
+		http.Error(w, "failed to render readme", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
+}
+
+// stripFrontmatter removes the YAML ---...--- block at the top of model cards.
+func stripFrontmatter(b []byte) []byte {
+	if !bytes.HasPrefix(b, []byte("---")) {
+		return b
+	}
+	end := bytes.Index(b[3:], []byte("\n---"))
+	if end < 0 {
+		return b
+	}
+	rest := b[3+end+4:]
+	return bytes.TrimLeft(rest, "\n")
 }
 
 func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {

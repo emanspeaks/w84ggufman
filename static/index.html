@@ -774,90 +774,10 @@ async function fetchAndRenderReadme(repoId) {
       return;
     }
     if (!resp.ok) throw new Error(await resp.text());
-    content.innerHTML = renderMarkdown(await resp.text());
+    content.innerHTML = await resp.text();
   } catch (e) {
     content.innerHTML = `<p class="msg-error">Failed to load README: ${esc(e.message)}</p>`;
   }
-}
-
-function renderMarkdown(raw) {
-  // Strip YAML frontmatter
-  let md = raw.replace(/^---[\s\S]*?\n---[ \t]*\n?/, '');
-
-  // Extract fenced code blocks (protect from further processing)
-  const fenced = [];
-  md = md.replace(/^```([\w.-]*)\n([\s\S]*?)^```[ \t]*$/gm, (_, lang, code) => {
-    fenced.push(`<pre><code>${esc(code)}</code></pre>`);
-    return '\x00F' + (fenced.length - 1) + '\x00';
-  });
-
-  // Extract inline code
-  const icodes = [];
-  md = md.replace(/`([^`\n]+)`/g, (_, c) => {
-    icodes.push(`<code>${esc(c)}</code>`);
-    return '\x00C' + (icodes.length - 1) + '\x00';
-  });
-
-  // Tables
-  md = md.replace(/((?:[ \t]*\|.+\n)+)/g, block => {
-    const rows = block.trim().split('\n')
-      .filter(r => !/^[ \t]*\|[\s\-:|]+\|[ \t]*$/.test(r));
-    if (!rows.length) return block;
-    let html = '<table>';
-    rows.forEach((row, i) => {
-      const cells = row.replace(/^[ \t]*\|/, '').replace(/\|[ \t]*$/, '').split('|');
-      const tag = i === 0 ? 'th' : 'td';
-      html += '<tr>' + cells.map(c => `<${tag}>${inlineMd(c.trim())}</${tag}>`).join('') + '</tr>';
-    });
-    return html + '</table>\n\n';
-  });
-
-  // Headers
-  md = md.replace(/^(#{1,4}) (.+)$/gm, (_, h, t) => `<h${h.length}>${inlineMd(t.trim())}</h${h.length}>\n`);
-
-  // Horizontal rules
-  md = md.replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, '<hr>');
-
-  // Blockquotes (single line)
-  md = md.replace(/^> ?(.+)$/gm, (_, t) => `<blockquote>${inlineMd(t)}</blockquote>`);
-
-  // Unordered lists
-  md = md.replace(/((?:^[ \t]*[-*+] .+(?:\n|$))+)/gm, block => {
-    const items = block.trim().split('\n')
-      .map(l => `<li>${inlineMd(l.replace(/^[ \t]*[-*+] /, ''))}</li>`).join('');
-    return `<ul>${items}</ul>\n\n`;
-  });
-
-  // Ordered lists
-  md = md.replace(/((?:^[ \t]*\d+\. .+(?:\n|$))+)/gm, block => {
-    const items = block.trim().split('\n')
-      .map(l => `<li>${inlineMd(l.replace(/^[ \t]*\d+\. /, ''))}</li>`).join('');
-    return `<ol>${items}</ol>\n\n`;
-  });
-
-  // Paragraphs: wrap leftover text runs between blank lines
-  md = md.split(/\n{2,}/).map(chunk => {
-    chunk = chunk.trim();
-    if (!chunk) return '';
-    if (/^(<h\d|<ul|<ol|<table|<pre|<hr|<blockquote|\x00F)/.test(chunk)) return chunk;
-    return `<p>${inlineMd(chunk.replace(/\n/g, ' '))}</p>`;
-  }).join('\n');
-
-  // Restore placeholders
-  md = md.replace(/\x00F(\d+)\x00/g, (_, i) => fenced[+i]);
-  md = md.replace(/\x00C(\d+)\x00/g, (_, i) => icodes[+i]);
-  return md;
-}
-
-function inlineMd(text) {
-  text = esc(text);
-  text = text.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-  text = text.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-  text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, ''); // strip images (relative paths break)
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return text;
 }
 
 // ── Status polling ─────────────────────────────────────────────────────────
