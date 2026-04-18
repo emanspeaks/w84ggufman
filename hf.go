@@ -41,25 +41,11 @@ type hfTreeEntry struct {
 	} `json:"lfs"`
 }
 
-// quantSuffixRe matches known GGUF quantization and shard suffixes so we can
-// strip them to find the base model "stem" for each filename.
-var quantSuffixRe = regexp.MustCompile(`(?i)[-_](?:Q[2-9]_[0-9K]+(?:_[MSL])?|IQ[1-4]_\w+|F16|BF16|F32|Q[0-9]+_[0-9]+)$`)
-var shardSuffixRe = regexp.MustCompile(`-\d{5}-of-\d{5}$`)
-
-// modelStem strips quantization and shard suffixes from a GGUF filename to
-// produce the base model name used for grouping.
-func modelStem(filename string) string {
-	s := strings.ToLower(strings.TrimSuffix(filepath.Base(filename), ".gguf"))
-	for {
-		n := quantSuffixRe.ReplaceAllString(s, "")
-		n = shardSuffixRe.ReplaceAllString(n, "")
-		if n == s {
-			break
-		}
-		s = n
-	}
-	return s
-}
+// hasQuantRe matches a GGUF filename that ends with a recognisable
+// quantisation suffix (e.g. -Q4_K_M, -UD-IQ2_XXS, -BF16). Any GGUF that
+// matches (and isn't an mmproj file) is a primary model choice; anything
+// without a quant suffix (e.g. imatrix.gguf) becomes a companion sidecar.
+var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:IQ\d+_\w+|Q\d+_\w+|BF16|F16|F32)\.gguf$`)
 
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
@@ -87,18 +73,12 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	// The tree API returns lfs.size which is the actual file size.
 	treeSizes := fetchTreeSizes(repoID, token)
 
-	// Group all GGUF files by their model stem. The stem is the filename with
-	// quantization and shard suffixes stripped. Files sharing the most common
-	// stem are the main model quants; everything else is a companion sidecar.
-	type stemGroup struct {
-		files []HFFile
+	info := &HFRepoInfo{
+		PipelineTag: model.PipelineTag,
+		Tags:        model.Tags,
 	}
-	stemMap := map[string]*stemGroup{}
-	stemOrder := []string{} // preserve insertion order for stable output
+
 	for _, s := range model.Siblings {
-		if !strings.HasSuffix(s.Rfilename, ".gguf") {
-			continue
-		}
 		size := s.Size
 		if sz, ok := treeSizes[s.Rfilename]; ok {
 			size = &sz
@@ -108,55 +88,23 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 			Size:        size,
 			DownloadURL: "https://huggingface.co/" + repoID + "/resolve/main/" + s.Rfilename,
 		}
-		stem := modelStem(s.Rfilename)
-		if _, exists := stemMap[stem]; !exists {
-			stemOrder = append(stemOrder, stem)
-			stemMap[stem] = &stemGroup{}
-		}
-		stemMap[stem].files = append(stemMap[stem].files, f)
-	}
 
-	// The stem with the most files is the primary model group.
-	bestStem := ""
-	bestCount := 0
-	for _, stem := range stemOrder {
-		if n := len(stemMap[stem].files); n > bestCount || (n == bestCount && stem < bestStem) {
-			bestCount = n
-			bestStem = stem
-		}
-	}
-
-	info := &HFRepoInfo{
-		PipelineTag: model.PipelineTag,
-		Tags:        model.Tags,
-	}
-	for _, stem := range stemOrder {
-		g := stemMap[stem]
-		if stem == bestStem {
-			info.Models = append(info.Models, g.files...)
-		} else {
-			info.Sidecars = append(info.Sidecars, g.files...)
-		}
-	}
-
-	// Non-GGUF files (imatrix.dat, README.md, etc.) are shown as optional
-	// companion sidecars. Skip only git metadata files.
-	for _, s := range model.Siblings {
 		if strings.HasSuffix(s.Rfilename, ".gguf") {
-			continue
+			// mmproj files are always companion sidecars even though they carry
+			// a precision suffix (f32/f16). Everything else with a quant suffix
+			// is a primary model choice; bare names like imatrix.gguf are sidecars.
+			if !matchesMmproj(s.Rfilename) && hasQuantRe.MatchString(s.Rfilename) {
+				info.Models = append(info.Models, f)
+			} else {
+				info.Sidecars = append(info.Sidecars, f)
+			}
+		} else {
+			// Non-GGUF files (imatrix.dat, README.md, …) are optional sidecars.
+			// Skip git metadata.
+			if base := filepath.Base(s.Rfilename); !strings.HasPrefix(base, ".git") {
+				info.Sidecars = append(info.Sidecars, f)
+			}
 		}
-		if base := filepath.Base(s.Rfilename); strings.HasPrefix(base, ".git") {
-			continue
-		}
-		size := s.Size
-		if sz, ok := treeSizes[s.Rfilename]; ok {
-			size = &sz
-		}
-		info.Sidecars = append(info.Sidecars, HFFile{
-			Filename:    s.Rfilename,
-			Size:        size,
-			DownloadURL: "https://huggingface.co/" + repoID + "/resolve/main/" + s.Rfilename,
-		})
 	}
 
 	// Detect vision from companion files.
