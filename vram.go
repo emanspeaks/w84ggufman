@@ -12,7 +12,7 @@ import (
 )
 
 // detectVRAMBytes probes the system for total GPU memory using platform-
-// specific methods, trying NVIDIA → AMD sysfs → Apple Silicon in order.
+// specific methods, trying NVIDIA → AMD unified → AMD discrete → Apple in order.
 // Returns 0 if nothing is detected; caller should fall back to config.
 func detectVRAMBytes() uint64 {
 	// NVIDIA via nvidia-smi
@@ -32,7 +32,22 @@ func detectVRAMBytes() uint64 {
 		}
 	}
 
-	// AMD on Linux via sysfs
+	// AMD APU / unified memory: TTM pages_limit is the active pool allocation
+	// in 4 KiB pages, set by the ttm.pages_limit=N kernel parameter.
+	// This reflects the actual VRAM limit in effect, unlike mem_info_vram_total
+	// which reports the full hardware RAM capacity on unified-memory systems.
+	// We treat any value > 1 GiB as a deliberate unified-memory VRAM allocation.
+	if data, err := os.ReadFile("/sys/module/ttm/parameters/pages_limit"); err == nil {
+		if pages, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && pages > 0 {
+			b := pages * 4096
+			if b > 1<<30 { // > 1 GiB: treat as a real VRAM allocation
+				log.Printf("VRAM: detected %.1f GiB via TTM pages_limit (AMD unified memory)", float64(b)/(1<<30))
+				return b
+			}
+		}
+	}
+
+	// AMD discrete GPU on Linux via sysfs (reports actual VRAM chip size).
 	if matches, _ := filepath.Glob("/sys/class/drm/card*/device/mem_info_vram_total"); len(matches) > 0 {
 		var total uint64
 		for _, p := range matches {
@@ -43,7 +58,7 @@ func detectVRAMBytes() uint64 {
 			}
 		}
 		if total > 0 {
-			log.Printf("VRAM: detected %.1f GiB via sysfs (AMD)", float64(total)/(1<<30))
+			log.Printf("VRAM: detected %.1f GiB via sysfs mem_info_vram_total (AMD)", float64(total)/(1<<30))
 			return total
 		}
 	}

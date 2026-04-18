@@ -95,33 +95,34 @@ threshold.
 
 On AMD APUs (and similar unified-memory GPUs) the kernel TTM subsystem manages a
 shared memory pool whose size is set at boot via kernel parameters rather than
-fixed hardware. The sysfs file that reports total VRAM
-(`/sys/class/drm/card*/device/mem_info_vram_total`) reflects the full hardware
-DRAM capacity, **not** your TTM allocation limit. Auto-detection therefore
-over-reports your usable VRAM.
+fixed hardware. w84ggufman auto-detects this by reading
+`/sys/module/ttm/parameters/pages_limit` (value in 4 KiB pages) **before**
+falling back to `mem_info_vram_total`, which reports the full hardware DRAM
+capacity rather than the active TTM allocation.
 
-Set your allocation explicitly:
+If you have set the TTM limit via kernel parameters, auto-detection should work:
 
 ```sh
-# Typical TTM kernel params (in your bootloader / NixOS boot.kernelParams):
-#   ttm.pages_limit=30000000   (pages × 4 KiB = ~114.4 GiB)
-#   ttm.page_pool_size=30000000
-#
-# Convert: pages_limit × 4096 ÷ 1024³ = GiB
+# NixOS: set TTM allocation at boot
+boot.kernelParams = [
+  "ttm.pages_limit=30000000"   # pages × 4 KiB = 114.4 GiB
+  "ttm.page_pool_size=30000000"
+];
+```
+
+```sh
+# Verify what the kernel sees:
+cat /sys/module/ttm/parameters/pages_limit
+# → 30000000
+
+# Convert to GiB:
 python3 -c "print(30_000_000 * 4096 / 1024**3, 'GiB')"
 # → 114.44 GiB
 ```
 
-Then set `vramGiB` to that value in your config or NixOS module option.
-
-In NixOS, `boot.kernelParams` controls these at build time:
-
-```nix
-boot.kernelParams = [
-  "ttm.pages_limit=30000000"
-  "ttm.page_pool_size=30000000"
-];
-```
+If auto-detection still reports the wrong value (e.g. on a system where TTM
+parameters are set in a non-standard way), override with `vramGiB` in config or
+the NixOS module option.
 
 ## Polkit setup
 
