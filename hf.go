@@ -45,7 +45,7 @@ type hfTreeEntry struct {
 // quantisation suffix (e.g. -Q4_K_M, -UD-IQ2_XXS, -BF16). Any GGUF that
 // matches (and isn't an mmproj file) is a primary model choice; anything
 // without a quant suffix (e.g. imatrix.gguf) becomes a companion sidecar.
-var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:IQ\d+_\w+|Q\d+_\w+|BF16|F16|F32)\.gguf$`)
+var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:IQ\d+_\w+|TQ\d+_\w+|Q\d+[\w_]*|MXFP\d+\w*|NVFP\d+|BF16|F16|F32)\.gguf$`)
 
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
