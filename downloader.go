@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -20,6 +22,7 @@ type downloader struct {
 	active string
 	busy   bool
 	lines  []string
+	cancel context.CancelFunc
 }
 
 func newDownloader(cfg Config) *downloader {
@@ -71,8 +74,21 @@ func (d *downloader) start(repoID, filename string) error {
 	d.active = fmt.Sprintf("%s — %s", repoID, filename)
 	d.busy = true
 	d.lines = nil
-	go d.run(repoID, pattern, destDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d.cancel = cancel
+	go d.run(ctx, repoID, pattern, destDir)
 	return nil
+}
+
+func (d *downloader) cancelDownload() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.busy || d.cancel == nil {
+		return false
+	}
+	d.cancel()
+	return true
 }
 
 func (d *downloader) appendLine(line string) {
@@ -81,9 +97,13 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
-func (d *downloader) run(repoID, pattern, destDir string) {
+func (d *downloader) run(ctx context.Context, repoID, pattern, destDir string) {
 	args := []string{"download", repoID, "--include", pattern, "--local-dir", destDir}
-	cmd := exec.Command("hf", args...)
+	cmd := exec.CommandContext(ctx, "hf", args...)
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	if d.cfg.HFToken != "" {
 		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
 	}
@@ -121,6 +141,13 @@ func (d *downloader) run(repoID, pattern, destDir string) {
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			d.appendLine("[gguf-manager] download cancelled")
+			d.mu.Lock()
+			d.busy = false
+			d.mu.Unlock()
+			return
+		}
 		d.finishWithError(fmt.Errorf("hf download failed: %w", err))
 		return
 	}

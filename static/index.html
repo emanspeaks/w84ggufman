@@ -148,6 +148,28 @@
     user-select: text; cursor: text;
   }
   #status-log .log-line { display: block; }
+  /* ── Disk bar ────────────────────────────────────────────────────────── */
+  .disk-info { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+  .disk-bar-track {
+    width: 72px; height: 6px; border-radius: 3px;
+    background: #1e293b; overflow: hidden;
+  }
+  .disk-bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s, background 0.5s; }
+  .disk-bar-fill.ok     { background: #16a34a; }
+  .disk-bar-fill.warn   { background: #d97706; }
+  .disk-bar-fill.danger { background: #dc2626; }
+  #disk-label { font-size: 0.7rem; color: #64748b; white-space: nowrap; font-family: 'Menlo','Consolas',monospace; }
+  /* ── File row states ─────────────────────────────────────────────────── */
+  .file-row-toobig .file-name { color: #f87171; }
+  .file-row-toobig .file-size { color: #f87171; }
+  .file-row-toobig .dl-btn   { background: #7f1d1d; color: #fca5a5; }
+  /* ── Cancel button ───────────────────────────────────────────────────── */
+  #cancel-btn {
+    background: #7f1d1d; color: #fca5a5; border: none;
+    font-size: 0.68rem; padding: 2px 8px; border-radius: 4px;
+    cursor: pointer; flex-shrink: 0; display: none;
+  }
+  #cancel-btn:hover { background: #991b1b; }
 
   /* ── Light mode ──────────────────────────────────────────────────────── */
   html.light body            { background: #f8fafc; color: #0f172a; }
@@ -190,6 +212,11 @@
   html.light #status-bar-label { color: #94a3b8; border-right-color: #e2e8f0; }
   html.light #status-bar.active #status-bar-text { color: #0f172a; }
   html.light #status-bar-chevron { color: #cbd5e1; }
+  html.light #disk-label { color: #94a3b8; }
+  html.light .disk-bar-track { background: #e2e8f0; }
+  html.light .file-row-toobig .file-name { color: #dc2626; }
+  html.light .file-row-toobig .file-size { color: #dc2626; }
+  html.light .file-row-toobig .dl-btn { background: #fee2e2; color: #dc2626; }
 </style>
 </head>
 <body>
@@ -199,6 +226,10 @@
     <span id="app-version"></span>
   </div>
   <span id="status-indicator" class="status-unknown">connecting…</span>
+  <div class="disk-info" id="disk-info" style="display:none">
+    <div class="disk-bar-track"><div id="disk-bar-fill" class="disk-bar-fill ok"></div></div>
+    <span id="disk-label"></span>
+  </div>
   <button id="theme-toggle" title="Toggle light/dark mode">☀</button>
   <button class="btn-restart" id="restart-btn">Restart Service</button>
 </header>
@@ -241,6 +272,7 @@
   <div id="status-bar-main">
     <span id="status-bar-label">Ready</span>
     <span id="status-bar-text"></span>
+    <button id="cancel-btn" onclick="event.stopPropagation();cancelDownload()">Cancel</button>
     <span id="status-bar-chevron">▲</span>
   </div>
 </div>
@@ -250,6 +282,8 @@
 
 let downloadInProgress = false;
 let activeEventSource = null;
+let diskAvailable = 0;
+let warnDownloadBytes = 10 * 1024 ** 3;
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -429,22 +463,28 @@ function renderRepoFiles(repoId, files) {
   }
   results.innerHTML = '';
   for (const f of files) {
+    const tooBig = diskAvailable > 0 && f.size > diskAvailable;
     const row = document.createElement('div');
-    row.className = 'file-row';
+    row.className = 'file-row' + (tooBig ? ' file-row-toobig' : '');
+    const sizeLabel = esc(formatBytes(f.size)) + (tooBig ? ' ⚠ exceeds free space' : '');
     row.innerHTML = `
       <span class="file-name">${esc(f.filename)}</span>
-      <span class="file-size">${esc(formatBytes(f.size))}</span>
+      <span class="file-size">${sizeLabel}</span>
       <button class="btn-primary dl-btn" ${downloadInProgress ? 'disabled' : ''}>Download</button>
     `;
-    row.querySelector('.dl-btn').addEventListener('click', () => startDownload(repoId, f.filename));
+    row.querySelector('.dl-btn').addEventListener('click', () => startDownload(repoId, f.filename, f.size));
     results.appendChild(row);
   }
 }
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-async function startDownload(repoId, filename) {
+async function startDownload(repoId, filename, size) {
   if (downloadInProgress) return;
+  if (warnDownloadBytes > 0 && size > warnDownloadBytes) {
+    const gib = (size / 1024 ** 3).toFixed(1);
+    if (!confirm(`This file is ${gib} GiB — are you sure you want to download it?`)) return;
+  }
   try {
     const resp = await fetch('/api/download', {
       method: 'POST',
@@ -501,6 +541,16 @@ function setDownloadState(inProgress) {
   document.querySelectorAll('.dl-btn').forEach(btn => {
     btn.disabled = inProgress;
   });
+  document.getElementById('cancel-btn').style.display = inProgress ? 'inline-block' : 'none';
+}
+
+async function cancelDownload() {
+  try {
+    await fetch('/api/download/cancel', { method: 'POST' });
+    setStatusBar('Ready', 'Download cancelled', false);
+  } catch (e) {
+    setStatusBar('Error', 'Cancel failed: ' + e.message, false);
+  }
 }
 
 // ── Restart service ────────────────────────────────────────────────────────
@@ -534,6 +584,17 @@ async function pollStatus() {
     if (s.version) {
       const ver = document.getElementById('app-version');
       if (!ver.textContent) ver.textContent = s.version;
+    }
+    if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
+    if (s.disk && s.disk.total > 0) {
+      diskAvailable = s.disk.available;
+      const used = s.disk.total - s.disk.available;
+      const pct = Math.round(used / s.disk.total * 100);
+      const fill = document.getElementById('disk-bar-fill');
+      fill.style.width = pct + '%';
+      fill.className = 'disk-bar-fill ' + (pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok');
+      document.getElementById('disk-label').textContent = formatBytes(s.disk.available) + ' free';
+      document.getElementById('disk-info').style.display = 'flex';
     }
     if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);

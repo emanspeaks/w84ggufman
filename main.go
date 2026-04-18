@@ -45,6 +45,7 @@ func main() {
 	mux.HandleFunc("GET /api/repo", srv.handleRepo)
 	mux.HandleFunc("POST /api/download", srv.handleDownload)
 	mux.HandleFunc("GET /api/download/status", srv.handleDownloadStatus)
+	mux.HandleFunc("POST /api/download/cancel", srv.handleCancelDownload)
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
 	mux.HandleFunc("POST /api/restart", srv.handleRestart)
