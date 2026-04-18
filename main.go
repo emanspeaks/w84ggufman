@@ -79,6 +79,14 @@ func (sw *statusWriter) WriteHeader(code int) {
 	sw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards to the underlying ResponseWriter so SSE streaming works
+// through the logging middleware.
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // logRequests logs every /api/ request to the system logger with method, path,
 // status code, and elapsed time.
 func logRequests(next http.Handler) http.Handler {

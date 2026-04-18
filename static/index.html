@@ -892,7 +892,8 @@ function openSSE() {
     activeEventSource = null;
     document.getElementById('dl-progress-fill').style.width = '0%';
     setStatusBar('Error', 'Connection lost', false);
-    setDownloadState(false);
+    // Do not clear downloadInProgress — pollStatus will reconnect SSE if the
+    // download is still running on the server.
   };
 }
 
@@ -979,7 +980,10 @@ async function pollStatus() {
       document.getElementById('disk-info').style.display = 'flex';
     }
     if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
-    if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
+    if (s.downloadInProgress && !activeEventSource) {
+      setDownloadState(true);
+      openSSE();
+    } else if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);
     }
   } catch (_) { /* network error, ignore */ }

@@ -333,7 +333,9 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.dl.start(req.RepoID, req.Filenames, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
 		log.Printf("error: start download %s %v: %v", req.RepoID, req.Filenames, err)
-		http.Error(w, err.Error(), http.StatusConflict)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"conflict": "busy", "message": err.Error()})
 		return
 	}
 	log.Printf("download queued: %s %v", req.RepoID, req.Filenames)
