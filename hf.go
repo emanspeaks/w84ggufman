@@ -153,7 +153,7 @@ func matchesSidecar(filename string) bool {
 	if i := strings.LastIndex(base, "/"); i >= 0 {
 		base = base[i+1:]
 	}
-	return strings.HasPrefix(base, "mmproj-")
+	return strings.HasPrefix(base, "mmproj-") || strings.Contains(base, "imatrix")
 }
 
 func matchesMmproj(filename string) bool {

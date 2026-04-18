@@ -10,7 +10,7 @@
     font-family: system-ui, -apple-system, sans-serif;
     background: #0f172a; color: #e2e8f0;
     min-height: 100vh; padding-bottom: 36px;
-    transition: background 0.2s, color 0.2s;
+    transition: background 0.2s, color 0.2s, padding-bottom 0.25s ease;
   }
   /* ── Header ──────────────────────────────────────────────────────────── */
   header {
@@ -478,6 +478,15 @@ document.getElementById('status-bar-main').addEventListener('click', toggleStatu
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
+})();
+
+// Keep body padding-bottom equal to the status bar height so content is
+// never obscured by the fixed bar, whether collapsed, expanded, or resized.
+(function() {
+  const bar = document.getElementById('status-bar');
+  new ResizeObserver(() => {
+    document.body.style.paddingBottom = bar.offsetHeight + 'px';
+  }).observe(bar);
 })();
 
 // ── Local models ───────────────────────────────────────────────────────────

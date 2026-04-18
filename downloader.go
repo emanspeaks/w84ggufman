@@ -17,6 +17,30 @@ import (
 
 const metaFilename = ".w84ggufman.json"
 
+// ansiRe strips ANSI/VT100 escape sequences from terminal output.
+var ansiRe = regexp.MustCompile(`\x1b(?:\[[0-9;]*[a-zA-Z]|[()][0-9A-Za-z]?)`)
+
+// scanCRLF is a bufio.SplitFunc that treats \r, \n, and \r\n as line endings
+// so tqdm progress updates (which use \r) arrive as individual log lines.
+func scanCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\r' || data[i] == '\n' {
+			j := i + 1
+			if data[i] == '\r' && j < len(data) && data[j] == '\n' {
+				j++
+			}
+			return j, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
 type modelMeta struct {
 	RepoID string `json:"repoId"`
 }
@@ -156,6 +180,13 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	}
 	args = append(args, "--local-dir", destDir)
 
+	d.appendLine(fmt.Sprintf("[w84ggufman] repo: %s", repoID))
+	d.appendLine(fmt.Sprintf("[w84ggufman] file: %s", pattern))
+	if len(sidecarFiles) > 0 {
+		d.appendLine(fmt.Sprintf("[w84ggufman] companions: %s", strings.Join(sidecarFiles, ", ")))
+	}
+	d.appendLine("[w84ggufman] starting hf download (initializing, please wait)...")
+
 	cmd := exec.CommandContext(ctx, "hf", args...)
 	// Send SIGINT on context cancellation; WaitDelay gives the process time to
 	// clean up before SIGKILL is sent automatically.
@@ -167,9 +198,12 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	}
 	cmd.WaitDelay = 5 * time.Second
 
+	env := append(os.Environ(), "PYTHONUNBUFFERED=1")
 	if d.cfg.HFToken != "" {
-		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
+		env = append(env, "HF_TOKEN="+d.cfg.HFToken)
 	}
+	cmd.Env = env
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		d.restoreOnFailure(oldDir, destDir)
@@ -193,15 +227,21 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stdout)
+		sc.Split(scanCRLF)
 		for sc.Scan() {
-			d.appendLine(sc.Text())
+			if line := strings.TrimSpace(ansiRe.ReplaceAllString(sc.Text(), "")); line != "" {
+				d.appendLine(line)
+			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stderr)
+		sc.Split(scanCRLF)
 		for sc.Scan() {
-			d.appendLine(sc.Text())
+			if line := strings.TrimSpace(ansiRe.ReplaceAllString(sc.Text(), "")); line != "" {
+				d.appendLine(line)
+			}
 		}
 	}()
 	wg.Wait()
