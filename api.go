@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 type server struct {
@@ -119,11 +120,30 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type diskInfo struct {
+	Total     uint64 `json:"total"`
+	Available uint64 `json:"available"`
+}
+
+func getDiskInfo(path string) diskInfo {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return diskInfo{}
+	}
+	bsize := uint64(stat.Bsize)
+	return diskInfo{
+		Total:     stat.Blocks * bsize,
+		Available: stat.Bavail * bsize,
+	}
+}
+
 type statusResponse struct {
-	LlamaReachable     bool   `json:"llamaReachable"`
-	DownloadInProgress bool   `json:"downloadInProgress"`
-	ActiveDownload     string `json:"activeDownload"`
-	Version            string `json:"version"`
+	LlamaReachable     bool     `json:"llamaReachable"`
+	DownloadInProgress bool     `json:"downloadInProgress"`
+	ActiveDownload     string   `json:"activeDownload"`
+	Version            string   `json:"version"`
+	Disk               diskInfo `json:"disk"`
+	WarnDownloadBytes  uint64   `json:"warnDownloadBytes"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -135,11 +155,14 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 	}
 	active, inProgress := s.dl.activeInfo()
+	warn := uint64(s.cfg.WarnDownloadGiB * float64(1<<30))
 	writeJSON(w, statusResponse{
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
 		ActiveDownload:     active,
 		Version:            version,
+		Disk:               getDiskInfo(s.cfg.ModelsDir),
+		WarnDownloadBytes:  warn,
 	})
 }
 
@@ -179,6 +202,14 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleDownloadStatus(w http.ResponseWriter, r *http.Request) {
 	s.dl.streamSSE(w, r)
+}
+
+func (s *server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
+	if !s.dl.cancelDownload() {
+		http.Error(w, "no download in progress", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) handleRestart(w http.ResponseWriter, r *http.Request) {
