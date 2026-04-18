@@ -129,14 +129,21 @@ func modelNameFromFilename(filename string) string {
 }
 
 // shardPattern returns a glob pattern matching all shards of the given file.
+// For files in subdirectories (subdir-grouped quants) the directory prefix is
+// preserved so the hf CLI receives the correct path (e.g. "Q8_0/Model*.gguf").
 func shardPattern(filename string) string {
-	base := filepath.Base(filename)
+	dir := ""
+	base := filename
+	if idx := strings.LastIndex(filename, "/"); idx >= 0 {
+		dir = filename[:idx+1]
+		base = filename[idx+1:]
+	}
 	re := regexp.MustCompile(`-\d{5}-of-\d{5}(\.gguf)$`)
 	if re.MatchString(base) {
 		stem := re.ReplaceAllString(base, "")
-		return stem + "*.gguf"
+		return dir + stem + "*.gguf"
 	}
-	return base
+	return dir + base
 }
 
 func (d *downloader) activeInfo() (string, bool) {

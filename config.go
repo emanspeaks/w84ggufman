@@ -12,6 +12,8 @@ type Config struct {
 	Port            int               `json:"port"`
 	HFToken         string            `json:"hfToken"`
 	WarnDownloadGiB float64           `json:"warnDownloadGiB"`
+	VramGiB         float64           `json:"vramGiB"`         // 0 = auto-detect
+	WarnVramPercent float64           `json:"warnVramPercent"` // % of VRAM; default 80
 	PresetGlobal    map[string]string `json:"presetGlobal"`
 }
 
@@ -23,6 +25,8 @@ func defaultConfig() Config {
 		Port:            9293,
 		HFToken:         "",
 		WarnDownloadGiB: 10.0,
+		VramGiB:         0,
+		WarnVramPercent: 80,
 		PresetGlobal: map[string]string{
 			"ctx-size":     "65536",
 			"flash-attn":   "on",

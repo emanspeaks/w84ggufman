@@ -139,6 +139,8 @@
   .quant-tile:hover { border-color: #64748b; color: #e2e8f0; }
   .quant-tile.selected { border-color: #3b82f6; background: rgba(59,130,246,0.15); color: #93c5fd; }
   .quant-tile.toobig { border-color: #7f1d1d; color: #9b4444; cursor: default; opacity: 0.7; }
+  .quant-tile.vramwarn { border-color: #92400e; }
+  .quant-tile.vramwarn .quant-tile-size { color: #f59e0b; }
   .quant-tile-name { padding: 3px 6px; font-weight: 500; }
   .quant-tile-size {
     padding: 3px 6px; font-size: 0.62rem; color: #475569;
@@ -328,6 +330,7 @@
   .readme-content blockquote { border-left: 3px solid #334155; padding-left: 0.75rem; color: #94a3b8; margin: 0.4rem 0; }
   .readme-content strong { font-weight: 600; color: #e2e8f0; }
   .readme-content em { font-style: italic; }
+  .readme-content img { max-width: 100%; height: auto; display: block; }
   html.light .readme-content { color: #475569; }
   html.light .readme-content h1 { color: #1e293b; border-bottom-color: #e2e8f0; }
   html.light .readme-content h2,.readme-content h3 { color: #1e293b; }
@@ -424,6 +427,7 @@
 let downloadInProgress = false;
 let activeEventSource = null;
 let warnDownloadBytes = 0;
+let warnVramBytes = 0;
 let diskFreeBytes = 0;
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -696,7 +700,7 @@ function renderRepoInfo(repoId, info) {
     // Group files by bit-depth for the grid rows.
     const byBit = new Map();
     for (const f of files) {
-      const label = quantDisplayName(f.filename, prefix);
+      const label = f.displayName || quantDisplayName(f.filename, prefix);
       const bits  = quantBitDepth(label);
       if (!byBit.has(bits)) byBit.set(bits, []);
       byBit.get(bits).push({ f, label });
@@ -724,12 +728,13 @@ function renderRepoInfo(repoId, info) {
 
       for (const { f, label } of group) {
         const tooBig = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
+        const vramWarn = warnVramBytes > 0 && f.size != null && f.size > warnVramBytes;
         const tile = document.createElement('span');
-        tile.className = 'quant-tile' + (tooBig ? ' toobig' : '');
+        tile.className = 'quant-tile' + (tooBig ? ' toobig' : '') + (vramWarn ? ' vramwarn' : '');
         tile.title = f.filename;
         tile.innerHTML =
           `<span class="quant-tile-name">${esc(label)}</span>` +
-          `<span class="quant-tile-size">${esc(formatBytes(f.size))}</span>`;
+          `<span class="quant-tile-size">${vramWarn ? '⚠ ' : ''}${esc(formatBytes(f.size))}</span>`;
 
         tile.addEventListener('click', () => {
           if (selected.has(f.filename)) {
@@ -810,6 +815,10 @@ async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) 
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GiB. Continue?`)) return;
+  }
+  if (warnVramBytes > 0 && totalSize != null && totalSize > warnVramBytes) {
+    const gib = (totalSize / (1024 ** 3)).toFixed(2);
+    if (!confirm(`This model (${gib} GiB) may exceed your VRAM limit. Continue anyway?`)) return;
   }
   const body = { repoId, filenames, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;
@@ -982,6 +991,7 @@ async function pollStatus() {
       document.getElementById('disk-info').style.display = 'flex';
     }
     if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
+    if (s.warnVramBytes) warnVramBytes = s.warnVramBytes;
     if (s.downloadInProgress && !activeEventSource) {
       setDownloadState(true);
       openSSE();
