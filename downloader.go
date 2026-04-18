@@ -15,6 +15,27 @@ import (
 	"time"
 )
 
+const metaFilename = ".gguf-manager.json"
+
+type modelMeta struct {
+	RepoID string `json:"repoId"`
+}
+
+func writeModelMeta(dir, repoID string) error {
+	b, _ := json.Marshal(modelMeta{RepoID: repoID})
+	return os.WriteFile(filepath.Join(dir, metaFilename), b, 0664)
+}
+
+func readModelMeta(dir string) modelMeta {
+	data, err := os.ReadFile(filepath.Join(dir, metaFilename))
+	if err != nil {
+		return modelMeta{}
+	}
+	var m modelMeta
+	_ = json.Unmarshal(data, &m)
+	return m
+}
+
 type downloader struct {
 	cfg    Config
 	preset *presetManager
@@ -63,8 +84,10 @@ func (d *downloader) cancelDownload() {
 	}
 }
 
-// start begins a download of filename (and optionally mmprojFile) from repoID.
-func (d *downloader) start(repoID, filename, mmprojFile string) error {
+// start begins a download. If force is true and the model directory already
+// exists, the existing directory is renamed to <dir>.old before downloading;
+// it is restored on failure and deleted on success.
+func (d *downloader) start(repoID, filename, mmprojFile string, force bool) error {
 	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
 		return fmt.Errorf("invalid filename")
 	}
@@ -82,8 +105,20 @@ func (d *downloader) start(repoID, filename, mmprojFile string) error {
 		return fmt.Errorf("download already in progress: %s", d.active)
 	}
 
-	pattern := shardPattern(filename)
 	destDir := filepath.Join(d.cfg.ModelsDir, modelName)
+	oldDir := ""
+	if _, err := os.Stat(destDir); err == nil {
+		// Model already exists. Rename it out of the way so we can restore it
+		// if the new download fails.
+		oldDir = destDir + ".old"
+		// Remove any stale .old from a previous failed redownload.
+		_ = os.RemoveAll(oldDir)
+		if err := os.Rename(destDir, oldDir); err != nil {
+			return fmt.Errorf("could not move existing model: %w", err)
+		}
+	}
+
+	pattern := shardPattern(filename)
 	label := fmt.Sprintf("%s — %s", repoID, filename)
 	if mmprojFile != "" {
 		label += " + " + mmprojFile
@@ -95,7 +130,7 @@ func (d *downloader) start(repoID, filename, mmprojFile string) error {
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
 
-	go d.run(ctx, repoID, pattern, mmprojFile, destDir, modelName)
+	go d.run(ctx, repoID, pattern, mmprojFile, destDir, modelName, oldDir)
 	return nil
 }
 
@@ -105,7 +140,7 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
-func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destDir, modelName string) {
+func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destDir, modelName, oldDir string) {
 	args := []string{"download", repoID, "--include", pattern}
 	if mmprojFile != "" {
 		args = append(args, "--include", mmprojFile)
@@ -123,21 +158,23 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destD
 	}
 	cmd.WaitDelay = 5 * time.Second
 
-
 	if d.cfg.HFToken != "" {
 		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		d.restoreOnFailure(oldDir, destDir)
 		d.finishWithError(fmt.Errorf("stdout pipe: %w", err))
 		return
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		d.restoreOnFailure(oldDir, destDir)
 		d.finishWithError(fmt.Errorf("stderr pipe: %w", err))
 		return
 	}
 	if err := cmd.Start(); err != nil {
+		d.restoreOnFailure(oldDir, destDir)
 		d.finishWithError(fmt.Errorf("failed to start hf: %w", err))
 		return
 	}
@@ -164,9 +201,11 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destD
 		if ctx.Err() != nil {
 			d.appendLine("[gguf-manager] download cancelled")
 		} else {
+			d.restoreOnFailure(oldDir, destDir)
 			d.finishWithError(fmt.Errorf("hf download failed: %w", err))
 			return
 		}
+		d.restoreOnFailure(oldDir, destDir)
 		d.mu.Lock()
 		d.busy = false
 		d.cancel = nil
@@ -174,9 +213,17 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destD
 		return
 	}
 
-	// Update managed.ini with the new model entry.
+	// Success: write metadata, clean up old dir, update managed.ini.
+	if err := writeModelMeta(destDir, repoID); err != nil {
+		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not write metadata: %v", err))
+	}
+	if oldDir != "" {
+		if err := os.RemoveAll(oldDir); err != nil {
+			d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not remove old model: %v", err))
+		}
+	}
+
 	modelPath := filepath.Join(destDir, filepath.Base(pattern))
-	// For sharded models the pattern ends in *.gguf; use the directory instead.
 	if strings.Contains(filepath.Base(pattern), "*") {
 		modelPath = destDir
 	}
@@ -199,6 +246,19 @@ func (d *downloader) run(ctx context.Context, repoID, pattern, mmprojFile, destD
 	d.busy = false
 	d.cancel = nil
 	d.mu.Unlock()
+}
+
+// restoreOnFailure removes any partial destDir and renames oldDir back.
+func (d *downloader) restoreOnFailure(oldDir, destDir string) {
+	if oldDir == "" {
+		return
+	}
+	_ = os.RemoveAll(destDir)
+	if err := os.Rename(oldDir, destDir); err != nil {
+		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not restore old model: %v", err))
+	} else {
+		d.appendLine("[gguf-manager] restored previous model after failed download")
+	}
 }
 
 func (d *downloader) finishWithError(err error) {
