@@ -30,6 +30,15 @@ type hfModelResponse struct {
 	Tags        []string `json:"tags"`
 }
 
+type hfTreeEntry struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+	Size *int64 `json:"size"`
+	LFS  *struct {
+		Size int64 `json:"size"`
+	} `json:"lfs"`
+}
+
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
 	if err != nil {
@@ -51,6 +60,11 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 		return nil, err
 	}
 
+	// Fetch the repo tree for accurate LFS file sizes. GGUF files are LFS
+	// objects; the siblings list returns null or the tiny pointer size (~135 B).
+	// The tree API returns lfs.size which is the actual file size.
+	treeSizes := fetchTreeSizes(repoID, token)
+
 	info := &HFRepoInfo{
 		PipelineTag: model.PipelineTag,
 		Tags:        model.Tags,
@@ -59,9 +73,13 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 		if !strings.HasSuffix(s.Rfilename, ".gguf") {
 			continue
 		}
+		size := s.Size
+		if sz, ok := treeSizes[s.Rfilename]; ok {
+			size = &sz
+		}
 		f := HFFile{
 			Filename:    s.Rfilename,
-			Size:        s.Size,
+			Size:        size,
 			DownloadURL: "https://huggingface.co/" + repoID + "/resolve/main/" + s.Rfilename,
 		}
 		if matchesSidecar(s.Rfilename) {
@@ -91,6 +109,43 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 		}
 	}
 	return info, nil
+}
+
+// fetchTreeSizes calls the HF tree API and returns a map of filename → actual
+// byte size. For LFS files it uses lfs.size; for regular files it uses size.
+// Returns an empty map on any error so callers can fall back gracefully.
+func fetchTreeSizes(repoID, token string) map[string]int64 {
+	sizes := make(map[string]int64)
+	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID+"/tree/main", nil)
+	if err != nil {
+		return sizes
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return sizes
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return sizes
+	}
+	var entries []hfTreeEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return sizes
+	}
+	for _, e := range entries {
+		if e.Type != "file" {
+			continue
+		}
+		if e.LFS != nil {
+			sizes[e.Path] = e.LFS.Size
+		} else if e.Size != nil {
+			sizes[e.Path] = *e.Size
+		}
+	}
+	return sizes
 }
 
 func matchesSidecar(filename string) bool {

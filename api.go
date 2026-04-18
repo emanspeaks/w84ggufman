@@ -114,6 +114,16 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		repoID := readModelMeta(modelDir).RepoID
+		if repoID == "" {
+			// Try to recover the source repo from GGUF file metadata.
+			repoID = detectRepoIDFromGGUF(modelDir, files)
+			if repoID != "" {
+				// Cache it so future lookups are instant.
+				_ = writeModelMeta(modelDir, repoID)
+			}
+		}
+
 		models = append(models, localModel{
 			Name:        entry.Name(),
 			Path:        modelDir,
@@ -124,7 +134,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 			Mmproj:      mmprojName,
 			InPreset:    inPreset,
 			PresetEntry: presetEntry,
-			RepoID:      readModelMeta(modelDir).RepoID,
+			RepoID:      repoID,
 		})
 	}
 	writeJSON(w, models)
