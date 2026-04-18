@@ -62,7 +62,7 @@ func main() {
 	mux.HandleFunc("POST /api/preset/{name}", srv.handleUpdatePresetModel)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("gguf-manager %s listening on %s", version, addr)
+	log.Printf("w84ggufman %s listening on %s", version, addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func ensureManagedINI(modelsDir string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("; managed by gguf-manager\n; do not edit manually\n")
+	sb.WriteString("; managed by w84ggufman\n; do not edit manually\n")
 
 	type modelEntry struct {
 		name, modelPath, mmprojPath string

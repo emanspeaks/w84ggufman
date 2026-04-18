@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/emanspeaks/gguf-manager/internal/ini"
+	"github.com/emanspeaks/w84ggufman/internal/ini"
 )
 
 type presetManager struct {
@@ -32,7 +32,7 @@ func (p *presetManager) Load() (*ini.File, error) {
 	}
 	if len(f.Header) == 0 {
 		f.Header = []string{
-			"; managed by gguf-manager",
+			"; managed by w84ggufman",
 			"; do not edit manually",
 		}
 	}

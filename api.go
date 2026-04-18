@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/emanspeaks/gguf-manager/internal/ini"
+	"github.com/emanspeaks/w84ggufman/internal/ini"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 )

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const sampleINI = `; managed by gguf-manager
+const sampleINI = `; managed by w84ggufman
 ; do not edit manually
 
 [global]

@@ -1,4 +1,4 @@
-# gguf-manager
+# w84ggufman
 
 A self-contained Go web application for managing GGUF model files used by a
 [llama-server](https://github.com/ggml-org/llama.cpp) instance running in router
@@ -30,10 +30,10 @@ Each model lives in its own subdirectory named after the model, e.g.
 
 ```sh
 # With defaults (no config file needed):
-gguf-manager
+w84ggufman
 
 # With a config file:
-gguf-manager --config /etc/gguf-manager.json
+w84ggufman --config /etc/w84ggufman.json
 ```
 
 Open `http://localhost:9293` in your browser.
@@ -64,13 +64,13 @@ pass it with `--config`:
 
 ## Polkit setup
 
-gguf-manager restarts llama-server via D-Bus (`org.freedesktop.systemd1.manage-units`).
+w84ggufman restarts llama-server via D-Bus (`org.freedesktop.systemd1.manage-units`).
 Without a polkit rule granting this permission to the process user, you'll see
 `connection reset by peer` in the status bar when restarting or after a download.
 
 ### NixOS — using the service module
 
-Enable `services.gguf-manager` (see [NixOS](#nixos) section below). The module
+Enable `services.w84ggufman` (see [NixOS](#nixos) section below). The module
 installs the polkit rule automatically for the service user. No further action needed.
 
 ### NixOS — running the binary directly
@@ -84,14 +84,14 @@ security.polkit.extraConfig = ''
   polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.systemd1.manage-units" &&
         action.lookup("unit") == "llama-cpp.service" &&
-        subject.user == "gguf-manager") {
+        subject.user == "w84ggufman") {
       return polkit.Result.YES;
     }
   });
 '';
 ```
 
-Replace `gguf-manager` with whatever user runs the binary, and
+Replace `w84ggufman` with whatever user runs the binary, and
 `llama-cpp.service` with your actual service name if it differs. Then rebuild:
 
 ```sh
@@ -103,7 +103,7 @@ sudo nixos-rebuild switch
 Drop a rules file into `/etc/polkit-1/rules.d/`:
 
 ```sh
-sudo tee /etc/polkit-1/rules.d/50-gguf-manager.rules <<'EOF'
+sudo tee /etc/polkit-1/rules.d/50-w84ggufman.rules <<'EOF'
 polkit.addRule(function(action, subject) {
   if (action.id == "org.freedesktop.systemd1.manage-units" &&
       action.lookup("unit") == "llama-cpp.service" &&
@@ -121,25 +121,25 @@ rules files without a restart.
 
 ### flake.nix
 
-Add gguf-manager as a flake input and import the NixOS module:
+Add w84ggufman as a flake input and import the NixOS module:
 
 ```nix
 {
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
-    gguf-manager.url = "github:emanspeaks/gguf-manager";
+    w84ggufman.url = "github:emanspeaks/w84ggufman";
     # ... your other inputs
   };
 
-  outputs = inputs@{ self, nixpkgs, gguf-manager, ... }: {
+  outputs = inputs@{ self, nixpkgs, w84ggufman, ... }: {
     nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
       modules = [
         ./configuration.nix
-        gguf-manager.nixosModules.default
+        w84ggufman.nixosModules.default
         {
-          services.gguf-manager = {
+          services.w84ggufman = {
             enable         = true;
-            package        = gguf-manager.packages.x86_64-linux.default;
+            package        = w84ggufman.packages.x86_64-linux.default;
             modelsDir      = "/var/lib/llama-models";
             llamaServerURL = "http://localhost:9292";
             llamaService   = "llama-cpp.service";
@@ -159,7 +159,7 @@ Add gguf-manager as a flake input and import the NixOS module:
 
 ### configuration.nix additions
 
-The module creates the `gguf-manager` system user automatically, but you need
+The module creates the `w84ggufman` system user automatically, but you need
 to ensure:
 
 **1. The `llm` group exists and includes the right members.**
@@ -167,13 +167,13 @@ If you use `services.llama-cpp`, that module creates the `llm` group. Add your
 own username and any other users who need model access:
 
 ```nix
-users.groups.llm.members = [ "your-username" "llama-cpp" "gguf-manager" ];
+users.groups.llm.members = [ "your-username" "llama-cpp" "w84ggufman" ];
 ```
 
 **2. The models directory exists and is group-writable by `llm`.**
 This is typically managed by your llama-cpp setup. If not already present, add
 a tmpfiles rule — note the directory should be owned by `llama-cpp` (or
-whatever user llama-server runs as), not `gguf-manager`:
+whatever user llama-server runs as), not `w84ggufman`:
 
 ```nix
 systemd.tmpfiles.rules = [
@@ -188,7 +188,7 @@ so you do **not** need a tmpfiles rule for it.
 
 | Thing | How |
 |---|---|
-| `gguf-manager` system user | `users.users.gguf-manager` with `isSystemUser = true` |
+| `w84ggufman` system user | `users.users.w84ggufman` with `isSystemUser = true` |
 | `HF_HOME` | Set to `${modelsDir}/.hf-cache` so `hf` never tries to write to `/.cache` |
 | `.hf-cache` directory | Created via `systemd.tmpfiles` owned by the service user |
 | polkit rule | Allows service user to restart `llamaService` via D-Bus without root |
@@ -226,7 +226,7 @@ gomod2nix generate
 ## Building
 
 ```sh
-go build -o gguf-manager .
+go build -o w84ggufman .
 ```
 
 Requires Go 1.22+.

@@ -36,7 +36,7 @@ jobs:
       - run: go vet ./...
 
       - name: Build
-        run: go build -v -o gguf-manager .
+        run: go build -v -o w84ggufman .
 
       - name: Verify binary exists and runs
-        run: ./gguf-manager --help || true
+        run: ./w84ggufman --help || true
