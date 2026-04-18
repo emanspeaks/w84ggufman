@@ -42,7 +42,7 @@ jobs:
         run: |
           go build -trimpath \
             -ldflags="-s -w -X main.version=${{ steps.ver.outputs.tag }}" \
-            -o gguf-manager-linux-amd64 .
+            -o w84ggufman-linux-amd64 .
 
       - name: Build linux/arm64
         env:
@@ -52,11 +52,11 @@ jobs:
         run: |
           go build -trimpath \
             -ldflags="-s -w -X main.version=${{ steps.ver.outputs.tag }}" \
-            -o gguf-manager-linux-arm64 .
+            -o w84ggufman-linux-arm64 .
 
       - name: Create release ${{ steps.ver.outputs.tag }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          files: gguf-manager-linux-*
+          files: w84ggufman-linux-*
           generate_release_notes: true

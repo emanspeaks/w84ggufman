@@ -1,5 +1,5 @@
 {
-  description = "gguf-manager — local web UI for managing GGUF models with llama-server";
+  description = "w84ggufman — local web UI for managing GGUF models with llama-server";
 
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
@@ -18,7 +18,7 @@
         version = pkgs.lib.trim (builtins.readFile ./VERSION);
       in {
         packages.default = buildGoApplication {
-          pname   = "gguf-manager";
+          pname   = "w84ggufman";
           version = version;
           src     = ./.;
           modules = ./gomod2nix.toml;

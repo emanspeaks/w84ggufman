@@ -1,4 +1,4 @@
-module github.com/emanspeaks/gguf-manager
+module github.com/emanspeaks/w84ggufman
 
 go 1.22
 

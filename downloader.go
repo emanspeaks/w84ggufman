@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const metaFilename = ".gguf-manager.json"
+const metaFilename = ".w84ggufman.json"
 
 type modelMeta struct {
 	RepoID string `json:"repoId"`
@@ -208,7 +208,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 
 	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
-			d.appendLine("[gguf-manager] download cancelled")
+			d.appendLine("[w84ggufman] download cancelled")
 		} else {
 			d.restoreOnFailure(oldDir, destDir)
 			d.finishWithError(fmt.Errorf("hf download failed: %w", err))
@@ -224,11 +224,11 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 
 	// Success: write metadata, clean up old dir, update managed.ini.
 	if err := writeModelMeta(destDir, repoID); err != nil {
-		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not write metadata: %v", err))
+		d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not write metadata: %v", err))
 	}
 	if oldDir != "" {
 		if err := os.RemoveAll(oldDir); err != nil {
-			d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not remove old model: %v", err))
+			d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not remove old model: %v", err))
 		}
 	}
 
@@ -244,14 +244,14 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		}
 	}
 	if err := d.preset.AddModel(modelName, modelPath, mmprojPath); err != nil {
-		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not update managed.ini: %v", err))
+		d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update managed.ini: %v", err))
 	}
 
-	d.appendLine("[gguf-manager] download complete, restarting service...")
+	d.appendLine("[w84ggufman] download complete, restarting service...")
 	if err := restartService(d.cfg.LlamaService); err != nil {
-		d.appendLine(fmt.Sprintf("[gguf-manager] warning: failed to restart service: %v", err))
+		d.appendLine(fmt.Sprintf("[w84ggufman] warning: failed to restart service: %v", err))
 	} else {
-		d.appendLine("[gguf-manager] service restarted successfully")
+		d.appendLine("[w84ggufman] service restarted successfully")
 	}
 
 	d.mu.Lock()
@@ -267,9 +267,9 @@ func (d *downloader) restoreOnFailure(oldDir, destDir string) {
 	}
 	_ = os.RemoveAll(destDir)
 	if err := os.Rename(oldDir, destDir); err != nil {
-		d.appendLine(fmt.Sprintf("[gguf-manager] warning: could not restore old model: %v", err))
+		d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not restore old model: %v", err))
 	} else {
-		d.appendLine("[gguf-manager] restored previous model after failed download")
+		d.appendLine("[w84ggufman] restored previous model after failed download")
 	}
 }
 

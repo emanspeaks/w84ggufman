@@ -1,8 +1,8 @@
 { config, lib, pkgs, ... }:
 
 let
-  cfg = config.services.gguf-manager;
-  configFile = pkgs.writeText "gguf-manager.json" (builtins.toJSON {
+  cfg = config.services.w84ggufman;
+  configFile = pkgs.writeText "w84ggufman.json" (builtins.toJSON {
     modelsDir         = cfg.modelsDir;
     llamaServerURL    = cfg.llamaServerURL;
     llamaService      = cfg.llamaService;
@@ -11,12 +11,12 @@ let
     warnDownloadGiB   = cfg.warnDownloadGiB;
   });
 in {
-  options.services.gguf-manager = {
-    enable = lib.mkEnableOption "gguf-manager local model manager UI";
+  options.services.w84ggufman = {
+    enable = lib.mkEnableOption "w84ggufman local model manager UI";
 
     package = lib.mkOption {
       type        = lib.types.package;
-      description = "The gguf-manager package to use.";
+      description = "The w84ggufman package to use.";
     };
 
     port = lib.mkOption {
@@ -63,28 +63,28 @@ in {
 
     serviceUser = lib.mkOption {
       type    = lib.types.str;
-      default = "gguf-manager";
-      description = "OS user the gguf-manager service runs as.";
+      default = "w84ggufman";
+      description = "OS user the w84ggufman service runs as.";
     };
 
     serviceGroup = lib.mkOption {
       type    = lib.types.str;
       default = "llm";
-      description = "OS group the gguf-manager service runs as. Must have write access to modelsDir.";
+      description = "OS group the w84ggufman service runs as. Must have write access to modelsDir.";
     };
   };
 
   config = lib.mkIf cfg.enable {
     # Create the service user when using the default name.
     # If serviceUser is set to an existing user, manage it yourself.
-    users.users.${cfg.serviceUser} = lib.mkIf (cfg.serviceUser == "gguf-manager") {
+    users.users.${cfg.serviceUser} = lib.mkIf (cfg.serviceUser == "w84ggufman") {
       isSystemUser = true;
       group        = cfg.serviceGroup;
-      description  = "gguf-manager service user";
+      description  = "w84ggufman service user";
     };
 
-    systemd.services.gguf-manager = {
-      description = "gguf-manager — local GGUF model management UI";
+    systemd.services.w84ggufman = {
+      description = "w84ggufman — local GGUF model management UI";
       after       = [ "network.target" cfg.llamaService ];
       wantedBy    = [ "multi-user.target" ];
 
@@ -96,7 +96,7 @@ in {
       };
 
       serviceConfig = {
-        ExecStart  = "${cfg.package}/bin/gguf-manager --config ${configFile}";
+        ExecStart  = "${cfg.package}/bin/w84ggufman --config ${configFile}";
         User       = cfg.serviceUser;
         Group      = cfg.serviceGroup;
         Restart    = "on-failure";
