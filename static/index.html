@@ -452,9 +452,9 @@ function esc(str) {
 function formatBytes(n) {
   if (n == null) return 'unknown';
   if (n < 1024) return n + ' B';
-  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
-  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
-  return (n / 1073741824).toFixed(2) + ' GB';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KiB';
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MiB';
+  return (n / 1073741824).toFixed(2) + ' GiB';
 }
 
 function formatETA(secs) {
@@ -644,23 +644,12 @@ function quantDisplayName(filename, prefix) {
   return tail || base;
 }
 
-// Source: https://github.com/huggingface/huggingface.js/blob/main/packages/tasks/src/gguf.ts
-const QUANT_BITS = {
-  IQ1_S:1, IQ1_M:1, TQ1_0:1, TQ2_0:2, Q1_0:1,
-  Q2_K_XL:2, Q2_K:2, Q2_K_S:2, IQ2_M:2, IQ2_S:2, IQ2_XS:2, IQ2_XXS:2,
-  Q3_K_XL:3, Q3_K_L:3, Q3_K_M:3, Q3_K_S:3, IQ3_M:3, IQ3_S:3, IQ3_XS:3, IQ3_XXS:3,
-  Q4_K_XL:4, Q4_K_M:4, Q4_K_S:4, IQ4_NL:4, IQ4_XS:4,
-  Q4_0_4_4:4, Q4_0_4_8:4, Q4_0_8_8:4, Q4_1_SOME_F16:4, Q4_0:4, Q4_1:4, Q4_2:4, Q4_3:4,
-  MXFP4_MOE:4, NVFP4:4,
-  Q5_K_XL:5, Q5_K_M:5, Q5_K_S:5, Q5_0:5, Q5_1:5,
-  Q6_K_XL:6, Q6_K:6,
-  Q8_K_XL:8, Q8_0:8,
-  BF16:16, F16:16,
-  F32:32,
-};
+// Bit depth is the first digit run after a known quant family prefix.
+// Known families: IQ, TQ, BF, MXFP, NVFP, Q, F (longest-first for alternation).
+// Strips leading UD- variant prefix before matching.
 function quantBitDepth(displayName) {
-  const normalized = displayName.replace(/^UD-/i, '').toUpperCase();
-  return QUANT_BITS[normalized] ?? 999;
+  const m = displayName.replace(/^UD-/i, '').match(/^(?:IQ|TQ|BF|MXFP|NVFP|[QF])(\d+)/i);
+  return m ? parseInt(m[1]) : 999;
 }
 
 function renderRepoInfo(repoId, info) {
@@ -818,7 +807,7 @@ async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) 
   if (!Array.isArray(filenames)) filenames = [filenames]; // compat
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
-    if (!confirm(`This download is ${gb} GB. Continue?`)) return;
+    if (!confirm(`This download is ${gb} GiB. Continue?`)) return;
   }
   const body = { repoId, filenames, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;

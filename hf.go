@@ -41,11 +41,10 @@ type hfTreeEntry struct {
 	} `json:"lfs"`
 }
 
-// hasQuantRe matches a GGUF filename that ends with a recognisable
-// quantisation suffix (e.g. -Q4_K_M, -UD-IQ2_XXS, -BF16). Any GGUF that
-// matches (and isn't an mmproj file) is a primary model choice; anything
-// without a quant suffix (e.g. imatrix.gguf) becomes a companion sidecar.
-var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:IQ\d+_\w+|TQ\d+_\w+|Q\d+[\w_]*|MXFP\d+\w*|NVFP\d+|BF16|F16|F32)\.gguf$`)
+// hasQuantRe matches a GGUF filename ending with a known quant family prefix
+// (longest-first: IQ, TQ, BF, MXFP, NVFP, then single-char Q/F) followed by
+// digits. Handles UD-* variant filenames transparently.
+var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*\.gguf$`)
 
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
@@ -130,38 +129,44 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	return info, nil
 }
 
-// fetchTreeSizes calls the HF tree API and returns a map of filename → actual
-// byte size. For LFS files it uses lfs.size; for regular files it uses size.
-// Returns an empty map on any error so callers can fall back gracefully.
+// fetchTreeSizes calls the HF tree API (with pagination) and returns a map of
+// filename → actual byte size. For LFS files it uses lfs.size; for regular
+// files it uses size. Returns an empty map on any error so callers can fall
+// back gracefully.
 func fetchTreeSizes(repoID, token string) map[string]int64 {
 	sizes := make(map[string]int64)
-	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID+"/tree/main", nil)
-	if err != nil {
-		return sizes
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return sizes
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return sizes
-	}
-	var entries []hfTreeEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
-		return sizes
-	}
-	for _, e := range entries {
-		if e.Type != "file" {
-			continue
+	base := "https://huggingface.co/api/models/" + repoID + "/tree/main"
+	for page := 0; ; page++ {
+		url := fmt.Sprintf("%s?p=%d&expand=true", base, page)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			break
 		}
-		if e.LFS != nil {
-			sizes[e.Path] = e.LFS.Size
-		} else if e.Size != nil {
-			sizes[e.Path] = *e.Size
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			break
+		}
+		var entries []hfTreeEntry
+		err = json.NewDecoder(resp.Body).Decode(&entries)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			break
+		}
+		for _, e := range entries {
+			if e.Type != "file" {
+				continue
+			}
+			if e.LFS != nil {
+				sizes[e.Path] = e.LFS.Size
+			} else if e.Size != nil {
+				sizes[e.Path] = *e.Size
+			}
+		}
+		if len(entries) == 0 {
+			break
 		}
 	}
 	return sizes
