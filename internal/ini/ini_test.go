@@ -2,14 +2,15 @@ package ini
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 const sampleINI = `; managed by w84ggufman
-; do not edit manually
 
-[global]
+[*]
 ctx-size = 65536
 flash-attn = on
 jinja = true
@@ -24,14 +25,25 @@ model = /models/AlphaModel/alpha.gguf
 model = /models/ZetaModel/zeta.gguf
 `
 
+// legacySampleINI uses the old [global] header to verify backwards-compat.
+const legacySampleINI = `; managed by w84ggufman
+
+[global]
+ctx-size = 65536
+n-gpu-layers = 999
+
+[ZetaModel]
+model = /models/ZetaModel/zeta.gguf
+`
+
 func TestParse(t *testing.T) {
 	f, err := Parse(strings.NewReader(sampleINI))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	if len(f.Header) != 2 {
-		t.Errorf("want 2 header lines, got %d", len(f.Header))
+	if len(f.Header) != 1 {
+		t.Errorf("want 1 header line, got %d", len(f.Header))
 	}
 	if f.Global["ctx-size"] != "65536" {
 		t.Errorf("global ctx-size: got %q", f.Global["ctx-size"])
@@ -47,6 +59,19 @@ func TestParse(t *testing.T) {
 	}
 	if f.Sections["ZetaModel"]["model"] != "/models/ZetaModel/zeta.gguf" {
 		t.Errorf("ZetaModel model: got %q", f.Sections["ZetaModel"]["model"])
+	}
+}
+
+func TestParseLegacyGlobal(t *testing.T) {
+	f, err := Parse(strings.NewReader(legacySampleINI))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.Global["ctx-size"] != "65536" {
+		t.Errorf("[global] section not parsed as global; ctx-size = %q", f.Global["ctx-size"])
+	}
+	if len(f.Sections) != 1 {
+		t.Errorf("want 1 section, got %d", len(f.Sections))
 	}
 }
 
@@ -88,7 +113,7 @@ func TestGlobalFirst(t *testing.T) {
 	f.Write(&buf)
 	out := buf.String()
 
-	gi := strings.Index(out, "[global]")
+	gi := strings.Index(out, "[*]")
 	ai := strings.Index(out, "[AAA]")
 	zi := strings.Index(out, "[ZZZ]")
 	if gi < 0 || ai < 0 || zi < 0 {
@@ -120,13 +145,12 @@ func TestAddSection(t *testing.T) {
 	if f2.Sections["NewModel"]["model"] != "/new/model.gguf" {
 		t.Error("NewModel not found after adding")
 	}
-	// Original sections still present
 	if f2.Sections["AlphaModel"] == nil {
 		t.Error("AlphaModel missing after adding NewModel")
 	}
 }
 
-func TestRemoveSection(t *testing.T) {
+func TestWriteRemoveSection(t *testing.T) {
 	f, _ := Parse(strings.NewReader(sampleINI))
 	delete(f.Sections, "AlphaModel")
 
@@ -150,5 +174,188 @@ func TestEmptyFile(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("expected empty output, got %q", buf.String())
+	}
+}
+
+// ── Text-based surgical operations ───────────────────────────────────────────
+
+func writeTemp(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "managed.ini")
+	if err := os.WriteFile(p, []byte(content), 0664); err != nil {
+		t.Fatalf("writeTemp: %v", err)
+	}
+	return p
+}
+
+func readTemp(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("readTemp: %v", err)
+	}
+	return string(b)
+}
+
+func TestRemoveSectionMiddle(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := RemoveSection(p, "AlphaModel"); err != nil {
+		t.Fatalf("RemoveSection: %v", err)
+	}
+	out := readTemp(t, p)
+	if strings.Contains(out, "AlphaModel") {
+		t.Error("AlphaModel still present")
+	}
+	if !strings.Contains(out, "ZetaModel") {
+		t.Error("ZetaModel missing")
+	}
+	if !strings.Contains(out, "[*]") {
+		t.Error("[*] global section missing")
+	}
+	// Comments must survive.
+	if !strings.Contains(out, "; managed by w84ggufman") {
+		t.Error("header comment missing")
+	}
+}
+
+func TestRemoveSectionLast(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := RemoveSection(p, "ZetaModel"); err != nil {
+		t.Fatalf("RemoveSection: %v", err)
+	}
+	out := readTemp(t, p)
+	if strings.Contains(out, "ZetaModel") {
+		t.Error("ZetaModel still present")
+	}
+	if !strings.Contains(out, "AlphaModel") {
+		t.Error("AlphaModel missing")
+	}
+}
+
+func TestRemoveSectionNotFound(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	original := readTemp(t, p)
+	if err := RemoveSection(p, "DoesNotExist"); err != nil {
+		t.Fatalf("RemoveSection: %v", err)
+	}
+	if readTemp(t, p) != original {
+		t.Error("file changed when section not found")
+	}
+}
+
+func TestRemoveSectionMissingFile(t *testing.T) {
+	err := RemoveSection(filepath.Join(t.TempDir(), "nope.ini"), "X")
+	if err != nil {
+		t.Errorf("expected nil for missing file, got %v", err)
+	}
+}
+
+func TestAppendSection(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	kvs := map[string]string{"model": "/models/New/new.gguf", "mmproj": "/models/New/mmproj.gguf"}
+	if err := AppendSection(p, "NewModel", kvs); err != nil {
+		t.Fatalf("AppendSection: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "[NewModel]") {
+		t.Error("[NewModel] not found")
+	}
+	if !strings.Contains(out, "mmproj = /models/New/mmproj.gguf") {
+		t.Error("mmproj key missing")
+	}
+	// Existing content must survive.
+	if !strings.Contains(out, "AlphaModel") {
+		t.Error("AlphaModel missing after append")
+	}
+	if !strings.Contains(out, "; managed by w84ggufman") {
+		t.Error("header comment lost after append")
+	}
+}
+
+func TestAppendSectionCreatesFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "new.ini")
+	if err := AppendSection(p, "M", map[string]string{"model": "/m"}); err != nil {
+		t.Fatalf("AppendSection: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "[M]") {
+		t.Error("[M] not found in created file")
+	}
+}
+
+func TestUpsertSectionKeysUpdateExisting(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := UpsertSectionKeys(p, "*", map[string]string{"ctx-size": "131072"}); err != nil {
+		t.Fatalf("UpsertSectionKeys: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "ctx-size = 131072") {
+		t.Error("ctx-size not updated")
+	}
+	// Other global keys must survive.
+	if !strings.Contains(out, "n-gpu-layers = 999") {
+		t.Error("n-gpu-layers lost")
+	}
+	// Model sections must survive.
+	if !strings.Contains(out, "AlphaModel") {
+		t.Error("AlphaModel lost after upsert")
+	}
+	if !strings.Contains(out, "; managed by w84ggufman") {
+		t.Error("header comment lost")
+	}
+}
+
+func TestUpsertSectionKeysAddNew(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := UpsertSectionKeys(p, "*", map[string]string{"threads": "8"}); err != nil {
+		t.Fatalf("UpsertSectionKeys: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "threads = 8") {
+		t.Error("new key not added")
+	}
+	if !strings.Contains(out, "ctx-size = 65536") {
+		t.Error("existing key lost")
+	}
+}
+
+func TestUpsertSectionKeysLegacyGlobal(t *testing.T) {
+	// Files with [global] header should still be updated when we pass "*".
+	p := writeTemp(t, legacySampleINI)
+	if err := UpsertSectionKeys(p, "*", map[string]string{"ctx-size": "4096"}); err != nil {
+		t.Fatalf("UpsertSectionKeys: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "ctx-size = 4096") {
+		t.Error("ctx-size not updated in legacy [global] file")
+	}
+}
+
+func TestUpsertSectionKeysSectionNotFound(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := UpsertSectionKeys(p, "BrandNewModel", map[string]string{"model": "/x"}); err != nil {
+		t.Fatalf("UpsertSectionKeys: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "[BrandNewModel]") {
+		t.Error("section not appended when missing")
+	}
+}
+
+func TestUpsertSectionKeysModelSection(t *testing.T) {
+	p := writeTemp(t, sampleINI)
+	if err := UpsertSectionKeys(p, "AlphaModel", map[string]string{"ctx-size": "8192", "threads": "4"}); err != nil {
+		t.Fatalf("UpsertSectionKeys: %v", err)
+	}
+	out := readTemp(t, p)
+	if !strings.Contains(out, "ctx-size = 8192") {
+		t.Error("ctx-size not updated in model section")
+	}
+	if !strings.Contains(out, "threads = 4") {
+		t.Error("new key not added to model section")
+	}
+	// Other keys in the section must survive.
+	if !strings.Contains(out, "mmproj = /models/AlphaModel/mmproj-F16.gguf") {
+		t.Error("mmproj lost from AlphaModel")
 	}
 }

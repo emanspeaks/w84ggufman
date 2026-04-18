@@ -413,19 +413,8 @@ func (s *server) handleUpdatePresetModel(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	f, err := s.preset.Load()
-	if err != nil {
-		http.Error(w, "failed to load preset: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if f.Sections[name] == nil {
-		f.Sections[name] = make(map[string]string)
-	}
-	for k, v := range kvs {
-		f.Sections[name][k] = v
-	}
-	if err := s.preset.Save(f); err != nil {
-		http.Error(w, "failed to save preset: "+err.Error(), http.StatusInternalServerError)
+	if err := s.preset.UpsertModelKeys(name, kvs); err != nil {
+		http.Error(w, "failed to update preset: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

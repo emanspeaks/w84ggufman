@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"github.com/emanspeaks/w84ggufman/internal/ini"
@@ -24,17 +23,15 @@ func (p *presetManager) Load() (*ini.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Seed global defaults for any keys not already present.
+	// Seed global defaults for any keys not already present (display only —
+	// this does not write to disk).
 	for k, v := range p.cfg.PresetGlobal {
 		if _, exists := f.Global[k]; !exists {
 			f.Global[k] = v
 		}
 	}
 	if len(f.Header) == 0 {
-		f.Header = []string{
-			"; managed by w84ggufman",
-			"; do not edit manually",
-		}
+		f.Header = []string{"; managed by w84ggufman — manual edits are preserved"}
 	}
 	return f, nil
 }
@@ -44,36 +41,23 @@ func (p *presetManager) Save(f *ini.File) error {
 }
 
 func (p *presetManager) AddModel(name, modelPath, mmprojPath string) error {
-	f, err := p.Load()
-	if err != nil {
-		return fmt.Errorf("preset load: %w", err)
-	}
-	sec := map[string]string{"model": modelPath}
+	kvs := map[string]string{"model": modelPath}
 	if mmprojPath != "" {
-		sec["mmproj"] = mmprojPath
+		kvs["mmproj"] = mmprojPath
 	}
-	f.Sections[name] = sec
-	return p.Save(f)
+	return ini.AppendSection(p.path, name, kvs)
 }
 
 func (p *presetManager) RemoveModel(name string) error {
-	f, err := p.Load()
-	if err != nil {
-		return fmt.Errorf("preset load: %w", err)
-	}
-	delete(f.Sections, name)
-	return p.Save(f)
+	return ini.RemoveSection(p.path, name)
 }
 
 func (p *presetManager) UpdateGlobal(kvs map[string]string) error {
-	f, err := p.Load()
-	if err != nil {
-		return fmt.Errorf("preset load: %w", err)
-	}
-	for k, v := range kvs {
-		f.Global[k] = v
-	}
-	return p.Save(f)
+	return ini.UpsertSectionKeys(p.path, "*", kvs)
+}
+
+func (p *presetManager) UpsertModelKeys(name string, kvs map[string]string) error {
+	return ini.UpsertSectionKeys(p.path, name, kvs)
 }
 
 func (p *presetManager) HasModel(name string) (bool, error) {
