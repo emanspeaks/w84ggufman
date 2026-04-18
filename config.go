@@ -6,20 +6,29 @@ import (
 )
 
 type Config struct {
-	ModelsDir      string `json:"modelsDir"`
-	LlamaServerURL string `json:"llamaServerURL"`
-	LlamaService   string `json:"llamaService"`
-	Port           int    `json:"port"`
-	HFToken        string `json:"hfToken"`
+	ModelsDir       string            `json:"modelsDir"`
+	LlamaServerURL  string            `json:"llamaServerURL"`
+	LlamaService    string            `json:"llamaService"`
+	Port            int               `json:"port"`
+	HFToken         string            `json:"hfToken"`
+	WarnDownloadGiB float64           `json:"warnDownloadGiB"`
+	PresetGlobal    map[string]string `json:"presetGlobal"`
 }
 
 func defaultConfig() Config {
 	return Config{
-		ModelsDir:      "/var/lib/llama-models",
-		LlamaServerURL: "http://localhost:9292",
-		LlamaService:   "llama-cpp.service",
-		Port:           9293,
-		HFToken:        "",
+		ModelsDir:       "/var/lib/llama-models",
+		LlamaServerURL:  "http://localhost:9292",
+		LlamaService:    "llama-cpp.service",
+		Port:            9293,
+		HFToken:         "",
+		WarnDownloadGiB: 10.0,
+		PresetGlobal: map[string]string{
+			"ctx-size":     "65536",
+			"flash-attn":   "on",
+			"jinja":        "true",
+			"n-gpu-layers": "999",
+		},
 	}
 }
 

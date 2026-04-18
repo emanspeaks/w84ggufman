@@ -37,8 +37,9 @@ func main() {
 
 	ensureManagedINI(cfg.ModelsDir)
 
-	dl := newDownloader(cfg)
-	srv := newServer(cfg, dl)
+	pm := newPresetManager(cfg)
+	dl := newDownloader(cfg, pm)
+	srv := newServer(cfg, dl, pm)
 
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -50,10 +51,14 @@ func main() {
 	mux.HandleFunc("GET /api/local", srv.handleLocal)
 	mux.HandleFunc("GET /api/repo", srv.handleRepo)
 	mux.HandleFunc("POST /api/download", srv.handleDownload)
+	mux.HandleFunc("POST /api/download/cancel", srv.handleCancelDownload)
 	mux.HandleFunc("GET /api/download/status", srv.handleDownloadStatus)
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
 	mux.HandleFunc("POST /api/restart", srv.handleRestart)
+	mux.HandleFunc("GET /api/preset", srv.handleGetPreset)
+	mux.HandleFunc("POST /api/preset/global", srv.handleUpdatePresetGlobal)
+	mux.HandleFunc("POST /api/preset/{name}", srv.handleUpdatePresetModel)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("gguf-manager %s listening on %s", version, addr)

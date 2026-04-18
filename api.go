@@ -8,23 +8,51 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+
+	"github.com/emanspeaks/gguf-manager/internal/ini"
 )
 
 type server struct {
-	cfg Config
-	dl  *downloader
+	cfg    Config
+	dl     *downloader
+	preset *presetManager
 }
 
-func newServer(cfg Config, dl *downloader) *server {
-	return &server{cfg: cfg, dl: dl}
+func newServer(cfg Config, dl *downloader, pm *presetManager) *server {
+	return &server{cfg: cfg, dl: dl, preset: pm}
+}
+
+type diskInfo struct {
+	TotalBytes uint64 `json:"totalBytes"`
+	FreeBytes  uint64 `json:"freeBytes"`
+	UsedBytes  uint64 `json:"usedBytes"`
+}
+
+func getDiskInfo(path string) (diskInfo, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return diskInfo{}, err
+	}
+	total := stat.Blocks * uint64(stat.Bsize)
+	free := stat.Bavail * uint64(stat.Bsize)
+	return diskInfo{
+		TotalBytes: total,
+		FreeBytes:  free,
+		UsedBytes:  total - free,
+	}, nil
 }
 
 type localModel struct {
-	Name      string   `json:"name"`
-	Path      string   `json:"path"`
-	SizeBytes int64    `json:"sizeBytes"`
-	Files     []string `json:"files"`
-	Loaded    bool     `json:"loaded"`
+	Name        string   `json:"name"`
+	Path        string   `json:"path"`
+	SizeBytes   int64    `json:"sizeBytes"`
+	Files       []string `json:"files"`
+	Loaded      bool     `json:"loaded"`
+	IsVision    bool     `json:"isVision"`
+	Mmproj      string   `json:"mmproj"`
+	InPreset    bool     `json:"inPreset"`
+	PresetEntry map[string]string `json:"presetEntry,omitempty"`
 }
 
 func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
@@ -40,6 +68,9 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 
 	loadedModels, _ := s.fetchLoadedModels()
 
+	var presetFile *ini.File
+	presetFile, _ = s.preset.Load()
+
 	models := make([]localModel, 0)
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -48,6 +79,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		modelDir := filepath.Join(s.cfg.ModelsDir, entry.Name())
 		var files []string
 		var totalSize int64
+		var mmprojName string
 		filepath.WalkDir(modelDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return nil
@@ -57,6 +89,9 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 					totalSize += info.Size()
 				}
 				files = append(files, d.Name())
+				if matchesMmproj(d.Name()) {
+					mmprojName = d.Name()
+				}
 			}
 			return nil
 		})
@@ -64,12 +99,26 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_, loaded := loadedModels[entry.Name()]
+
+		inPreset := false
+		var presetEntry map[string]string
+		if presetFile != nil {
+			if sec, ok := presetFile.Sections[entry.Name()]; ok {
+				inPreset = true
+				presetEntry = sec
+			}
+		}
+
 		models = append(models, localModel{
-			Name:      entry.Name(),
-			Path:      modelDir,
-			SizeBytes: totalSize,
-			Files:     files,
-			Loaded:    loaded,
+			Name:        entry.Name(),
+			Path:        modelDir,
+			SizeBytes:   totalSize,
+			Files:       files,
+			Loaded:      loaded,
+			IsVision:    mmprojName != "",
+			Mmproj:      mmprojName,
+			InPreset:    inPreset,
+			PresetEntry: presetEntry,
 		})
 	}
 	writeJSON(w, models)
@@ -113,6 +162,9 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to delete: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := s.preset.RemoveModel(name); err != nil {
+		log.Printf("warning: failed to remove %s from managed.ini: %v", name, err)
+	}
 	if err := restartService(s.cfg.LlamaService); err != nil {
 		log.Printf("warning: failed to restart %s: %v", s.cfg.LlamaService, err)
 	}
@@ -120,10 +172,12 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	LlamaReachable     bool   `json:"llamaReachable"`
-	DownloadInProgress bool   `json:"downloadInProgress"`
-	ActiveDownload     string `json:"activeDownload"`
-	Version            string `json:"version"`
+	LlamaReachable     bool     `json:"llamaReachable"`
+	DownloadInProgress bool     `json:"downloadInProgress"`
+	ActiveDownload     string   `json:"activeDownload"`
+	Version            string   `json:"version"`
+	Disk               diskInfo `json:"disk"`
+	WarnDownloadBytes  uint64   `json:"warnDownloadBytes"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -135,11 +189,15 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 	}
 	active, inProgress := s.dl.activeInfo()
+	disk, _ := getDiskInfo(s.cfg.ModelsDir)
+	warnBytes := uint64(s.cfg.WarnDownloadGiB * 1024 * 1024 * 1024)
 	writeJSON(w, statusResponse{
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
 		ActiveDownload:     active,
 		Version:            version,
+		Disk:               disk,
+		WarnDownloadBytes:  warnBytes,
 	})
 }
 
@@ -149,18 +207,19 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id parameter", http.StatusBadRequest)
 		return
 	}
-	files, err := fetchRepoFiles(repoID, s.cfg.HFToken)
+	info, err := fetchRepoInfo(repoID, s.cfg.HFToken)
 	if err != nil {
 		http.Error(w, "failed to fetch repo: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, files)
+	writeJSON(w, info)
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		RepoID   string `json:"repoId"`
-		Filename string `json:"filename"`
+		RepoID      string `json:"repoId"`
+		Filename    string `json:"filename"`
+		MmprojFile  string `json:"mmprojFile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -170,11 +229,16 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "repoId and filename are required", http.StatusBadRequest)
 		return
 	}
-	if err := s.dl.start(req.RepoID, req.Filename); err != nil {
+	if err := s.dl.start(req.RepoID, req.Filename, req.MmprojFile); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
+	s.dl.cancelDownload()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) handleDownloadStatus(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +248,61 @@ func (s *server) handleDownloadStatus(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if err := restartService(s.cfg.LlamaService); err != nil {
 		http.Error(w, "failed to restart service: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleGetPreset(w http.ResponseWriter, r *http.Request) {
+	f, err := s.preset.Load()
+	if err != nil {
+		http.Error(w, "failed to load preset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type presetResponse struct {
+		Global   map[string]string            `json:"global"`
+		Sections map[string]map[string]string `json:"sections"`
+	}
+	writeJSON(w, presetResponse{Global: f.Global, Sections: f.Sections})
+}
+
+func (s *server) handleUpdatePresetGlobal(w http.ResponseWriter, r *http.Request) {
+	var kvs map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&kvs); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := s.preset.UpdateGlobal(kvs); err != nil {
+		http.Error(w, "failed to update preset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleUpdatePresetModel(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "invalid model name", http.StatusBadRequest)
+		return
+	}
+	var kvs map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&kvs); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	f, err := s.preset.Load()
+	if err != nil {
+		http.Error(w, "failed to load preset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if f.Sections[name] == nil {
+		f.Sections[name] = make(map[string]string)
+	}
+	for k, v := range kvs {
+		f.Sections[name][k] = v
+	}
+	if err := s.preset.Save(f); err != nil {
+		http.Error(w, "failed to save preset: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

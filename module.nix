@@ -3,11 +3,12 @@
 let
   cfg = config.services.gguf-manager;
   configFile = pkgs.writeText "gguf-manager.json" (builtins.toJSON {
-    modelsDir      = cfg.modelsDir;
-    llamaServerURL = cfg.llamaServerURL;
-    llamaService   = cfg.llamaService;
-    port           = cfg.port;
-    hfToken        = cfg.hfToken;
+    modelsDir         = cfg.modelsDir;
+    llamaServerURL    = cfg.llamaServerURL;
+    llamaService      = cfg.llamaService;
+    port              = cfg.port;
+    hfToken           = cfg.hfToken;
+    warnDownloadGiB   = cfg.warnDownloadGiB;
   });
 in {
   options.services.gguf-manager = {
@@ -52,6 +53,12 @@ in {
       type    = lib.types.str;
       default = "";
       description = "Optional HuggingFace token for private repos or higher rate limits.";
+    };
+
+    warnDownloadGiB = lib.mkOption {
+      type    = lib.types.float;
+      default = 10.0;
+      description = "Prompt for confirmation before downloading files larger than this many GiB. Set to 0 to disable.";
     };
 
     serviceUser = lib.mkOption {
