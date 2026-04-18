@@ -10,7 +10,7 @@
     font-family: system-ui, -apple-system, sans-serif;
     background: #0f172a; color: #e2e8f0;
     min-height: 100vh; padding-bottom: 36px;
-    transition: background 0.2s, color 0.2s;
+    transition: background 0.2s, color 0.2s, padding-bottom 0.25s ease;
   }
   /* ── Header ──────────────────────────────────────────────────────────── */
   header {
@@ -149,7 +149,14 @@
     display: flex; align-items: center; gap: 0.75rem;
     padding: 6px 1rem; min-height: 32px;
     cursor: pointer; user-select: none;
+    position: relative; overflow: hidden;
   }
+  #dl-progress-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    width: 0%; background: rgba(59,130,246,0.14);
+    transition: width 0.6s linear; pointer-events: none;
+  }
+  #status-bar-main > *:not(#dl-progress-fill) { position: relative; z-index: 1; }
   #status-bar-label {
     color: #334155; white-space: nowrap;
     border-right: 1px solid #1e293b; padding-right: 0.75rem;
@@ -368,6 +375,7 @@
     <div id="status-log"></div>
   </div>
   <div id="status-bar-main">
+    <div id="dl-progress-fill"></div>
     <span id="status-bar-label">Ready</span>
     <span id="status-bar-text"></span>
     <button id="cancel-dl-btn">Cancel</button>
@@ -412,6 +420,12 @@ function formatBytes(n) {
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
   if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
   return (n / 1073741824).toFixed(2) + ' GB';
+}
+
+function formatETA(secs) {
+  if (secs < 60) return secs + 's';
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
 }
 
 function showErr(id, msg) {
@@ -478,6 +492,15 @@ document.getElementById('status-bar-main').addEventListener('click', toggleStatu
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
+})();
+
+// Keep body padding-bottom equal to the status bar height so content is
+// never obscured by the fixed bar, whether collapsed, expanded, or resized.
+(function() {
+  const bar = document.getElementById('status-bar');
+  new ResizeObserver(() => {
+    document.body.style.paddingBottom = bar.offsetHeight + 'px';
+  }).observe(bar);
 })();
 
 // ── Local models ───────────────────────────────────────────────────────────
@@ -651,7 +674,7 @@ async function startDownload(repoId, filename, sidecarFiles, totalSize, force) {
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GB. Continue?`)) return;
   }
-  const body = { repoId, filename };
+  const body = { repoId, filename, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;
   if (force) body.force = true;
   let resp;
@@ -702,14 +725,27 @@ function openSSE() {
     setStatusBar('Download', JSON.parse(e.data), true);
   });
 
+  es.addEventListener('progress', (e) => {
+    const p = JSON.parse(e.data);
+    const fill = document.getElementById('dl-progress-fill');
+    if (p.pct >= 0) fill.style.width = p.pct + '%';
+    let text = p.pct >= 0 ? p.pct + '%' : formatBytes(p.dlBytes);
+    if (p.speed > 0) text += ' — ' + formatBytes(p.speed) + '/s';
+    if (p.eta > 0) text += ' (' + formatETA(p.eta) + ')';
+    document.getElementById('status-bar-label').textContent = 'Download';
+    document.getElementById('status-bar-text').textContent = text;
+  });
+
   es.addEventListener('status', (e) => {
     const msg = JSON.parse(e.data);
     es.close();
     activeEventSource = null;
+    document.getElementById('dl-progress-fill').style.width = '0%';
     if (msg.status === 'done') {
       setStatusBar('Ready', 'Download complete', false);
       setDownloadState(false);
       fetchLocalModels();
+      pollStatus();
     } else if (msg.status === 'idle') {
       setStatusBar('Ready', '', false);
       setDownloadState(false);
@@ -719,6 +755,7 @@ function openSSE() {
   es.onerror = () => {
     es.close();
     activeEventSource = null;
+    document.getElementById('dl-progress-fill').style.width = '0%';
     setStatusBar('Error', 'Connection lost', false);
     setDownloadState(false);
   };

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,30 @@ import (
 )
 
 const metaFilename = ".w84ggufman.json"
+
+// ansiRe strips ANSI/VT100 escape sequences from terminal output.
+var ansiRe = regexp.MustCompile(`\x1b(?:\[[0-9;]*[a-zA-Z]|[()][0-9A-Za-z]?)`)
+
+// scanCRLF is a bufio.SplitFunc that treats \r, \n, and \r\n as line endings
+// so tqdm progress updates (which use \r) arrive as individual log lines.
+func scanCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\r' || data[i] == '\n' {
+			j := i + 1
+			if data[i] == '\r' && j < len(data) && data[j] == '\n' {
+				j++
+			}
+			return j, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
 
 type modelMeta struct {
 	RepoID string `json:"repoId"`
@@ -36,14 +61,38 @@ func readModelMeta(dir string) modelMeta {
 	return m
 }
 
+type progressInfo struct {
+	Pct     int   `json:"pct"`     // 0–100; -1 when total is unknown
+	Speed   int64 `json:"speed"`   // bytes/sec
+	ETA     int   `json:"eta"`     // seconds remaining; -1 when unknown
+	DLBytes int64 `json:"dlBytes"` // bytes downloaded so far
+}
+
 type downloader struct {
-	cfg    Config
-	preset *presetManager
-	mu     sync.Mutex
-	active string
-	busy   bool
-	lines  []string
-	cancel context.CancelFunc
+	cfg        Config
+	preset     *presetManager
+	mu         sync.Mutex
+	active     string
+	busy       bool
+	lines      []string
+	cancel     context.CancelFunc
+	totalBytes int64
+	progress   *progressInfo
+}
+
+// dirSize returns the total size of all regular files under path.
+func dirSize(path string) int64 {
+	var total int64
+	filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func newDownloader(cfg Config, pm *presetManager) *downloader {
@@ -87,7 +136,7 @@ func (d *downloader) cancelDownload() {
 // start begins a download. If force is true and the model directory already
 // exists, the existing directory is renamed to <dir>.old before downloading;
 // it is restored on failure and deleted on success.
-func (d *downloader) start(repoID, filename string, sidecarFiles []string, force bool) error {
+func (d *downloader) start(repoID, filename string, sidecarFiles []string, totalBytes int64, force bool) error {
 	if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
 		return fmt.Errorf("invalid filename")
 	}
@@ -135,6 +184,8 @@ func (d *downloader) start(repoID, filename string, sidecarFiles []string, force
 	d.active = label
 	d.busy = true
 	d.lines = nil
+	d.totalBytes = totalBytes
+	d.progress = nil
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
@@ -156,6 +207,13 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	}
 	args = append(args, "--local-dir", destDir)
 
+	d.appendLine(fmt.Sprintf("[w84ggufman] repo: %s", repoID))
+	d.appendLine(fmt.Sprintf("[w84ggufman] file: %s", pattern))
+	if len(sidecarFiles) > 0 {
+		d.appendLine(fmt.Sprintf("[w84ggufman] companions: %s", strings.Join(sidecarFiles, ", ")))
+	}
+	d.appendLine("[w84ggufman] starting hf download (initializing, please wait)...")
+
 	cmd := exec.CommandContext(ctx, "hf", args...)
 	// Send SIGINT on context cancellation; WaitDelay gives the process time to
 	// clean up before SIGKILL is sent automatically.
@@ -167,9 +225,12 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	}
 	cmd.WaitDelay = 5 * time.Second
 
+	env := append(os.Environ(), "PYTHONUNBUFFERED=1")
 	if d.cfg.HFToken != "" {
-		cmd.Env = append(os.Environ(), "HF_TOKEN="+d.cfg.HFToken)
+		env = append(env, "HF_TOKEN="+d.cfg.HFToken)
 	}
+	cmd.Env = env
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		d.restoreOnFailure(oldDir, destDir)
@@ -188,20 +249,75 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		return
 	}
 
+	// Watch the destination directory size to report byte-level progress.
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		startTime := time.Now()
+		var lastBytes int64
+		var lastMeasure time.Time
+		for range ticker.C {
+			d.mu.Lock()
+			busy := d.busy
+			total := d.totalBytes
+			d.mu.Unlock()
+			if !busy {
+				return
+			}
+			now := time.Now()
+			cur := dirSize(destDir)
+			speed := int64(0)
+			if !lastMeasure.IsZero() {
+				dt := now.Sub(lastMeasure).Seconds()
+				if dt > 0 && cur > lastBytes {
+					speed = int64(float64(cur-lastBytes) / dt)
+				}
+			}
+			// Fall back to average speed when instantaneous is zero.
+			if speed == 0 {
+				if elapsed := time.Since(startTime).Seconds(); elapsed > 0 {
+					speed = int64(float64(cur) / elapsed)
+				}
+			}
+			lastBytes = cur
+			lastMeasure = now
+			pct := -1
+			eta := -1
+			if total > 0 {
+				pct = int(float64(cur) / float64(total) * 100)
+				if pct > 99 {
+					pct = 99
+				}
+				if speed > 0 && cur < total {
+					eta = int(float64(total-cur) / float64(speed))
+				}
+			}
+			d.mu.Lock()
+			d.progress = &progressInfo{Pct: pct, Speed: speed, ETA: eta, DLBytes: cur}
+			d.mu.Unlock()
+		}
+	}()
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stdout)
+		sc.Split(scanCRLF)
 		for sc.Scan() {
-			d.appendLine(sc.Text())
+			if line := strings.TrimSpace(ansiRe.ReplaceAllString(sc.Text(), "")); line != "" {
+				d.appendLine(line)
+			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stderr)
+		sc.Split(scanCRLF)
 		for sc.Scan() {
-			d.appendLine(sc.Text())
+			if line := strings.TrimSpace(ansiRe.ReplaceAllString(sc.Text(), "")); line != "" {
+				d.appendLine(line)
+			}
 		}
 	}()
 	wg.Wait()
@@ -218,6 +334,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 		d.mu.Lock()
 		d.busy = false
 		d.cancel = nil
+		d.progress = nil
 		d.mu.Unlock()
 		return
 	}
@@ -257,6 +374,7 @@ func (d *downloader) run(ctx context.Context, repoID, pattern string, sidecarFil
 	d.mu.Lock()
 	d.busy = false
 	d.cancel = nil
+	d.progress = nil
 	d.mu.Unlock()
 }
 
@@ -278,6 +396,7 @@ func (d *downloader) finishWithError(err error) {
 	d.lines = append(d.lines, fmt.Sprintf("[error] %v", err))
 	d.busy = false
 	d.cancel = nil
+	d.progress = nil
 	d.mu.Unlock()
 }
 
@@ -314,10 +433,16 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		snapshot := make([]string, len(d.lines))
 		copy(snapshot, d.lines)
 		busy := d.busy
+		prog := d.progress
 		d.mu.Unlock()
 
 		for ; sent < len(snapshot); sent++ {
 			writeSSEEvent(w, "line", snapshot[sent])
+			flusher.Flush()
+		}
+
+		if prog != nil {
+			writeSSEEvent(w, "progress", prog)
 			flusher.Flush()
 		}
 
