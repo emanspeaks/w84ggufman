@@ -62,7 +62,7 @@
   /* ── Layout ──────────────────────────────────────────────────────────── */
   main {
     display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 1.25rem;
-    padding: 1.25rem; max-width: 1600px; margin: 0 auto;
+    padding: 1.25rem;
   }
   @media (max-width: 1100px) {
     main { grid-template-columns: 1fr 1fr; }
@@ -74,7 +74,7 @@
   }
   section {
     background: #1e293b; border-radius: 10px; padding: 1.25rem;
-    border: 1px solid #334155;
+    border: 1px solid #334155; min-width: 0;
   }
   .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
   .section-header h2 { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
@@ -307,7 +307,7 @@
   .model-card.clickable:hover { border-color: #475569; }
   html.light .model-card.clickable:hover { border-color: #94a3b8; }
   /* ── README panel ────────────────────────────────────────────────────────── */
-  .readme-body { overflow-y: auto; max-height: 72vh; padding-right: 4px; }
+  .readme-body { padding-right: 4px; }
   .readme-content { font-size: 0.82rem; line-height: 1.65; color: #cbd5e1; }
   .readme-content h1 { font-size: 1.2rem; font-weight: 700; margin: 1rem 0 0.4rem; color: #f1f5f9; border-bottom: 1px solid #334155; padding-bottom: 0.3rem; }
   .readme-content h2 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.35rem; color: #e2e8f0; }
