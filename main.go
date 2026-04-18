@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 )
 
 //go:embed static
@@ -31,6 +32,8 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	ensureManagedINI(cfg.ModelsDir)
+
 	dl := newDownloader(cfg)
 	srv := newServer(cfg, dl)
 
@@ -53,5 +56,19 @@ func main() {
 	log.Printf("gguf-manager %s listening on %s", version, addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// ensureManagedINI creates modelsDir/managed.ini with a header comment if the
+// file does not already exist. llama-server requires the file to be present
+// when started with --models-preset, even when no models are configured yet.
+func ensureManagedINI(modelsDir string) {
+	path := filepath.Join(modelsDir, "managed.ini")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	const header = "; managed by gguf-manager\n; do not edit manually\n"
+	if err := os.WriteFile(path, []byte(header), 0664); err != nil {
+		log.Printf("warning: could not create managed.ini: %v", err)
 	}
 }
