@@ -98,10 +98,12 @@ in {
       };
     };
 
-    # Create hfHome directory. The parent (modelsDir) must already exist —
-    # typically created by the llama-cpp service or a tmpfiles rule in your config.
+    # Create hfHome directory and recursively fix any existing files that were
+    # created with wrong permissions (e.g. from a previous run without UMask=0002).
+    # 'd' creates if missing; 'Z' recursively chowns and chmods existing contents.
     systemd.tmpfiles.rules = [
       "d ${cfg.hfHome} 0775 ${cfg.serviceUser} ${cfg.serviceGroup} -"
+      "Z ${cfg.hfHome} 0775 ${cfg.serviceUser} ${cfg.serviceGroup} -"
     ];
 
     # Allow the service user to restart the llama service without root.
