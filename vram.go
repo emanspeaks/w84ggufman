@@ -35,17 +35,28 @@ func detectVRAMBytes() uint64 {
 		}
 	}
 
-	// AMD APU / unified memory: TTM pages_limit is the active pool allocation
-	// in 4 KiB pages, set by the ttm.pages_limit=N kernel parameter.
-	// This reflects the actual VRAM limit in effect, unlike mem_info_vram_total
-	// which reports the full hardware RAM capacity on unified-memory systems.
-	// We treat any value > 1 GiB as a deliberate unified-memory VRAM allocation.
+	// AMD APU / unified memory: total GPU-accessible memory is the TTM dynamic
+	// pool (pages_limit * 4 KiB) plus the BIOS-reserved carve-out reported by
+	// mem_info_vram_total. On a Strix Halo the carve-out is ~0.5 GiB and the
+	// TTM pool is the bulk; together they match what nvtop reports as total VRAM.
+	// We treat any TTM value > 1 GiB as a deliberate unified-memory allocation.
 	if data, err := os.ReadFile("/sys/module/ttm/parameters/pages_limit"); err == nil {
 		if pages, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && pages > 0 {
 			b := pages * 4096
-			if b > 1<<30 { // > 1 GiB: treat as a real VRAM allocation
-				log.Printf("VRAM: detected %.1f GiB via TTM pages_limit (AMD unified memory)", float64(b)/(1<<30))
-				return b
+			if b > 1<<30 {
+				var carveOut uint64
+				if matches, _ := filepath.Glob("/sys/class/drm/card*/device/mem_info_vram_total"); len(matches) > 0 {
+					for _, p := range matches {
+						if d, err := os.ReadFile(p); err == nil {
+							if v, err := strconv.ParseUint(strings.TrimSpace(string(d)), 10, 64); err == nil {
+								carveOut += v
+							}
+						}
+					}
+				}
+				total := b + carveOut
+				log.Printf("VRAM: detected %.3f GiB via TTM pages_limit + sysfs carve-out (AMD unified memory)", float64(total)/(1<<30))
+				return total
 			}
 		}
 	}
@@ -61,7 +72,7 @@ func detectVRAMBytes() uint64 {
 			}
 		}
 		if total > 0 {
-			log.Printf("VRAM: detected %.1f GiB via sysfs mem_info_vram_total (AMD)", float64(total)/(1<<30))
+			log.Printf("VRAM: detected %.3f GiB via sysfs mem_info_vram_total (AMD)", float64(total)/(1<<30))
 			return total
 		}
 	}
