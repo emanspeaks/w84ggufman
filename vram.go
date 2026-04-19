@@ -35,17 +35,28 @@ func detectVRAMBytes() uint64 {
 		}
 	}
 
-	// AMD APU / unified memory: TTM pages_limit is the active pool allocation
-	// in 4 KiB pages, set by the ttm.pages_limit=N kernel parameter.
-	// This reflects the actual VRAM limit in effect, unlike mem_info_vram_total
-	// which reports the full hardware RAM capacity on unified-memory systems.
-	// We treat any value > 1 GiB as a deliberate unified-memory VRAM allocation.
+	// AMD APU / unified memory: total GPU-accessible memory is the TTM dynamic
+	// pool (pages_limit * 4 KiB) plus the BIOS-reserved carve-out reported by
+	// mem_info_vram_total. On a Strix Halo the carve-out is ~0.5 GiB and the
+	// TTM pool is the bulk; together they match what nvtop reports as total VRAM.
+	// We treat any TTM value > 1 GiB as a deliberate unified-memory allocation.
 	if data, err := os.ReadFile("/sys/module/ttm/parameters/pages_limit"); err == nil {
 		if pages, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil && pages > 0 {
 			b := pages * 4096
-			if b > 1<<30 { // > 1 GiB: treat as a real VRAM allocation
-				log.Printf("VRAM: detected %.1f GiB via TTM pages_limit (AMD unified memory)", float64(b)/(1<<30))
-				return b
+			if b > 1<<30 {
+				var carveOut uint64
+				if matches, _ := filepath.Glob("/sys/class/drm/card*/device/mem_info_vram_total"); len(matches) > 0 {
+					for _, p := range matches {
+						if d, err := os.ReadFile(p); err == nil {
+							if v, err := strconv.ParseUint(strings.TrimSpace(string(d)), 10, 64); err == nil {
+								carveOut += v
+							}
+						}
+					}
+				}
+				total := b + carveOut
+				log.Printf("VRAM: detected %.3f GiB via TTM pages_limit + sysfs carve-out (AMD unified memory)", float64(total)/(1<<30))
+				return total
 			}
 		}
 	}
@@ -61,7 +72,7 @@ func detectVRAMBytes() uint64 {
 			}
 		}
 		if total > 0 {
-			log.Printf("VRAM: detected %.1f GiB via sysfs mem_info_vram_total (AMD)", float64(total)/(1<<30))
+			log.Printf("VRAM: detected %.3f GiB via sysfs mem_info_vram_total (AMD)", float64(total)/(1<<30))
 			return total
 		}
 	}
@@ -112,10 +123,12 @@ type drmAmdgpuInfoReq struct {
 }
 
 // amdRenderDevice returns the path to the first amdgpu DRM render node, found
-// once at first call and cached. Logs success or failure once to the system log.
+// once at first call and cached. Also populates amdDevPCIAddr for fdinfo use.
+// Logs success or failure once to the system log.
 var (
-	amdDevOnce sync.Once
-	amdDevPath string
+	amdDevOnce    sync.Once
+	amdDevPath    string
+	amdDevPCIAddr string // PCI address e.g. "0000:c1:00.0", for fdinfo fallback
 )
 
 func amdRenderDevice() string {
@@ -123,16 +136,35 @@ func amdRenderDevice() string {
 		driverLinks, _ := filepath.Glob("/sys/class/drm/card*/device/driver")
 		for _, link := range driverLinks {
 			target, err := os.Readlink(link)
-			if err != nil {
+			if err != nil || !strings.Contains(filepath.Base(target), "amdgpu") {
 				continue
 			}
-			if !strings.Contains(filepath.Base(target), "amdgpu") {
-				continue
-			}
-			cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // e.g. "card0"
+			cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // e.g. "card1"
 			if !strings.HasPrefix(cardName, "card") {
 				continue
 			}
+
+			// Resolve the PCI device path. Render minor numbers are assigned only
+			// to render-capable DRM devices and don't always equal 128+card_number.
+			// On APUs where card0 is display-only, card1 gets renderD128 not D129.
+			// Walking the sysfs device hierarchy finds the correct node directly.
+			pciDev, pciErr := filepath.EvalSymlinks("/sys/class/drm/" + cardName + "/device")
+			if pciErr == nil && amdDevPCIAddr == "" {
+				amdDevPCIAddr = filepath.Base(pciDev)
+			}
+			if pciErr == nil {
+				nodes, _ := filepath.Glob(pciDev + "/drm/renderD*")
+				for _, node := range nodes {
+					renderPath := "/dev/dri/" + filepath.Base(node)
+					if _, err := os.Stat(renderPath); err == nil {
+						amdDevPath = renderPath
+						log.Printf("VRAM: AMD render device: %s (card %s)", renderPath, cardName)
+						return
+					}
+				}
+			}
+
+			// Fallback: assume renderD(128+N) for cardN.
 			n, err := strconv.ParseUint(cardName[4:], 10, 32)
 			if err != nil {
 				continue
@@ -140,10 +172,10 @@ func amdRenderDevice() string {
 			renderPath := "/dev/dri/renderD" + strconv.FormatUint(128+n, 10)
 			if _, err := os.Stat(renderPath); err == nil {
 				amdDevPath = renderPath
-				log.Printf("VRAM: AMD render device: %s (card %s)", renderPath, cardName)
+				log.Printf("VRAM: AMD render device: %s (card %s, by number)", renderPath, cardName)
 				return
 			}
-			log.Printf("VRAM: amdgpu found on %s but render node %s missing", cardName, renderPath)
+			log.Printf("VRAM: amdgpu found on %s but no render node found", cardName)
 		}
 		if amdDevPath == "" {
 			if len(driverLinks) == 0 {
@@ -154,6 +186,59 @@ func amdRenderDevice() string {
 		}
 	})
 	return amdDevPath
+}
+
+// amdFDInfoVRAMUsed returns total AMD GPU VRAM used by reading /proc/*/fdinfo/*
+// entries for the GPU at pciAddr. This is the approach used by nvtop and works
+// even when the DRM ioctl path is unavailable or returns incomplete data.
+// Usage is summed per unique drm-client-id to avoid double-counting clients
+// that have multiple file descriptors open to the same device.
+func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
+	fdinfos, _ := filepath.Glob("/proc/[0-9]*/fdinfo/*")
+	seen := make(map[string]uint64) // drm-client-id → max vram KiB seen
+
+	for _, path := range fdinfos {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var clientID string
+		var vramKiB uint64
+		matchesDev := false
+
+		for _, line := range strings.Split(string(data), "\n") {
+			k, v, ok := strings.Cut(line, ":\t")
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(k) {
+			case "drm-pdev":
+				matchesDev = strings.TrimSpace(v) == pciAddr
+			case "drm-client-id":
+				clientID = strings.TrimSpace(v)
+			case "drm-memory-vram":
+				if f := strings.Fields(v); len(f) >= 1 {
+					if n, err2 := strconv.ParseUint(f[0], 10, 64); err2 == nil {
+						vramKiB = n
+					}
+				}
+			}
+		}
+		if matchesDev && clientID != "" {
+			if existing, ok2 := seen[clientID]; !ok2 || vramKiB > existing {
+				seen[clientID] = vramKiB
+			}
+		}
+	}
+
+	if len(seen) == 0 {
+		return 0, false
+	}
+	var total uint64
+	for _, kib := range seen {
+		total += kib * 1024
+	}
+	return total, true
 }
 
 // queryAMDGPUVRAMUsed opens the given DRM render node and issues the
@@ -203,11 +288,17 @@ func detectVRAMUsedBytes() (uint64, bool) {
 		}
 	}
 
-	// AMD via DRM ioctl (AMDGPU_INFO_MEMORY). Works on both APU and discrete GPU,
-	// unlike sysfs mem_info_vram_used which is broken on APUs (CVE-2025-40289).
-	// Requires the process to be in the 'render' group (or root).
-	if dev := amdRenderDevice(); dev != "" {
+	// AMD: try DRM ioctl first (AMDGPU_INFO_MEMORY), fall back to fdinfo.
+	// The ioctl requires render-group access; fdinfo (/proc/*/fdinfo/*) works
+	// without it and is the approach used by nvtop on unified-memory APUs.
+	dev := amdRenderDevice() // also populates amdDevPCIAddr
+	if dev != "" {
 		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
+			return used, true
+		}
+	}
+	if amdDevPCIAddr != "" {
+		if used, ok := amdFDInfoVRAMUsed(amdDevPCIAddr); ok {
 			return used, true
 		}
 	}
