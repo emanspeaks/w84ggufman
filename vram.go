@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 // detectVRAMBytes probes the system for total GPU memory using platform-
@@ -77,9 +79,91 @@ func detectVRAMBytes() uint64 {
 	return 0
 }
 
+// ── AMD DRM ioctl ────────────────────────────────────────────────────────────
+//
+// DRM_IOCTL_AMDGPU_INFO = _IOW('d', 0x45, struct drm_amdgpu_info)
+// sizeof(struct drm_amdgpu_info) == 32 on x86_64/arm64 (8+4+4+16-byte union).
+// AMDGPU_INFO_MEMORY (0x19) returns drm_amdgpu_memory_info (3×4×8 = 96 bytes).
+
+const drmIoctlAmdgpuInfo = uintptr(0x40206445)
+const amdgpuInfoMemory = uint32(0x19)
+
+type drmAmdgpuHeapInfo struct {
+	TotalHeapSize  uint64
+	UsableHeapSize uint64
+	HeapUsage      uint64
+	MaxAllocation  uint64
+}
+
+type drmAmdgpuMemoryInfo struct {
+	VRAM          drmAmdgpuHeapInfo
+	CpuAccessVRAM drmAmdgpuHeapInfo
+	GTT           drmAmdgpuHeapInfo
+}
+
+// drmAmdgpuInfoReq matches struct drm_amdgpu_info from include/uapi/drm/amdgpu_drm.h.
+// Layout: return_pointer(8) + return_size(4) + query(4) + union(16) = 32 bytes.
+type drmAmdgpuInfoReq struct {
+	ReturnPointer uint64
+	ReturnSize    uint32
+	Query         uint32
+	_             [16]byte // union — no sub-fields needed for AMDGPU_INFO_MEMORY
+}
+
+// findAMDRenderDevice returns the first /dev/dri/renderD* node whose sysfs driver
+// symlink points to amdgpu. Returns "" if none is found.
+func findAMDRenderDevice() string {
+	driverLinks, _ := filepath.Glob("/sys/class/drm/card*/device/driver")
+	for _, link := range driverLinks {
+		target, err := os.Readlink(link)
+		if err != nil || !strings.Contains(filepath.Base(target), "amdgpu") {
+			continue
+		}
+		// link = /sys/class/drm/card0/device/driver → card dir = /sys/class/drm/card0
+		cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // "card0"
+		if !strings.HasPrefix(cardName, "card") {
+			continue
+		}
+		n, err := strconv.ParseUint(cardName[4:], 10, 32)
+		if err != nil {
+			continue
+		}
+		renderPath := "/dev/dri/renderD" + strconv.FormatUint(128+n, 10)
+		if _, err := os.Stat(renderPath); err == nil {
+			return renderPath
+		}
+	}
+	return ""
+}
+
+// queryAMDGPUVRAMUsed opens the given DRM render node and issues the
+// AMDGPU_INFO_MEMORY ioctl to read current VRAM heap usage.
+func queryAMDGPUVRAMUsed(devicePath string) (uint64, bool) {
+	f, err := os.Open(devicePath)
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+
+	var mem drmAmdgpuMemoryInfo
+	req := drmAmdgpuInfoReq{
+		ReturnPointer: uint64(uintptr(unsafe.Pointer(&mem))),
+		ReturnSize:    uint32(unsafe.Sizeof(mem)),
+		Query:         amdgpuInfoMemory,
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
+		f.Fd(),
+		drmIoctlAmdgpuInfo,
+		uintptr(unsafe.Pointer(&req)),
+	)
+	if errno != 0 {
+		return 0, false
+	}
+	return mem.VRAM.HeapUsage, true
+}
+
 // detectVRAMUsedBytes probes the system for current GPU memory usage in bytes.
 // Returns (used, true) on success, (0, false) when measurement is not available.
-// AMD unified-memory APUs are skipped to avoid a kernel crash (CVE-2025-40289).
 func detectVRAMUsedBytes() (uint64, bool) {
 	// NVIDIA via nvidia-smi
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -97,27 +181,11 @@ func detectVRAMUsedBytes() (uint64, bool) {
 		}
 	}
 
-	// AMD: reading mem_info_vram_used on APUs (unified memory) can crash the kernel
-	// (CVE-2025-40289). Skip if TTM pages_limit indicates we're on an APU.
-	isAPU := false
-	if data, err := os.ReadFile("/sys/module/ttm/parameters/pages_limit"); err == nil {
-		if pages, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
-			isAPU = pages*4096 > 1<<30
-		}
-	}
-	if !isAPU {
-		if matches, _ := filepath.Glob("/sys/class/drm/card*/device/mem_info_vram_used"); len(matches) > 0 {
-			var total uint64
-			for _, p := range matches {
-				if data, err := os.ReadFile(p); err == nil {
-					if b, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
-						total += b
-					}
-				}
-			}
-			if total > 0 {
-				return total, true
-			}
+	// AMD via DRM ioctl (AMDGPU_INFO_MEMORY). Works on both APU and discrete GPU,
+	// unlike sysfs mem_info_vram_used which is broken on APUs (CVE-2025-40289).
+	if dev := findAMDRenderDevice(); dev != "" {
+		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
+			return used, true
 		}
 	}
 

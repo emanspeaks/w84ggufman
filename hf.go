@@ -51,6 +51,11 @@ var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])
 // (e.g. "Q8_0", "BF16", "UD-Q5_K_M"). Used to classify subdir-grouped shards.
 var quantDirRe = regexp.MustCompile(`(?i)^(?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+`)
 
+// quantSuffixRe captures the quant token from the end of a model filename stem
+// (after stripping .gguf and any shard suffix). Companion to hasQuantRe/quantDirRe.
+// E.g.: "Llama-3-8B-Q4_K_M" → "Q4_K_M", "model-IQ4_XS" → "IQ4_XS".
+var quantSuffixRe = regexp.MustCompile(`(?i)[-_]((?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*)$`)
+
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
 	if err != nil {
