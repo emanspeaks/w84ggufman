@@ -65,21 +65,32 @@ type localModel struct {
 	RepoID      string            `json:"repoId,omitempty"`
 }
 
-// iniModelDir returns the directory containing the model files for an INI section.
-// The section's "model" key gives the file path; we take its parent directory.
+// iniModelDir returns the directory that contains (or IS) the model for an INI
+// section. When the "model" key points to a .gguf file, returns its parent dir.
+// When it points to a directory (sharded model or bare quant dir), returns the
+// path itself. Returns "" when the key is absent.
 func iniModelDir(section map[string]string) string {
-	if p := section["model"]; p != "" {
+	p := section["model"]
+	if p == "" {
+		return ""
+	}
+	if strings.HasSuffix(strings.ToLower(p), ".gguf") {
 		return filepath.Dir(p)
 	}
-	return ""
+	// Path has no .gguf extension — llama.cpp accepts a directory for sharded
+	// models, so treat the value as the model directory directly.
+	return p
 }
 
-// scanModelDir returns all non-mmproj .gguf filenames and their total size in dir.
-// Only the top level is scanned; WalkDir is not used because model files for a
-// single quant are always in the same directory.
+// scanModelDir returns all non-mmproj .gguf filenames and their total size in
+// dir. Returns a non-nil empty slice (not nil) so JSON encodes as [] not null.
 func scanModelDir(dir string) (files []string, totalSize int64) {
+	files = []string{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("scanModelDir %q: %v", dir, err)
+		}
 		return
 	}
 	for _, e := range entries {
@@ -116,10 +127,12 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 				coveredDirs[filepath.Clean(modelDir)] = struct{}{}
 			}
 
-			var files []string
+			files := []string{}
 			var totalSize int64
 			if modelDir != "" {
 				files, totalSize = scanModelDir(modelDir)
+			} else {
+				log.Printf("handleLocal: INI section %q has no model path", name)
 			}
 
 			mmprojPath := section["mmproj"]
