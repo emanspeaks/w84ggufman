@@ -341,7 +341,7 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine model dir: prefer INI lookup (works for both layouts), fall back
-	// to directory search for models not registered in managed.ini.
+	// to directory search for models not registered in models.ini.
 	modelDir := ""
 	fromINI := false
 	if pf, err := s.preset.Load(); err == nil {
@@ -388,7 +388,7 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.preset.RemoveModel(name); err != nil {
-		log.Printf("warning: failed to remove %s from managed.ini: %v", name, err)
+		log.Printf("warning: failed to remove %s from models.ini: %v", name, err)
 	}
 	if err := restartService(s.cfg.LlamaService); err != nil {
 		log.Printf("warning: failed to restart %s: %v", s.cfg.LlamaService, err)

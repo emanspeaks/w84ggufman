@@ -181,7 +181,7 @@ func TestEmptyFile(t *testing.T) {
 
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "managed.ini")
+	p := filepath.Join(t.TempDir(), "models.ini")
 	if err := os.WriteFile(p, []byte(content), 0664); err != nil {
 		t.Fatalf("writeTemp: %v", err)
 	}

@@ -132,11 +132,11 @@ func findFirstShard(dir string, files []string) string {
 	return dir
 }
 
-// ensureManagedINI creates modelsDir/managed.ini if it does not already exist,
+// ensureManagedINI creates modelsDir/models.ini if it does not already exist,
 // pre-populated with entries for any model directories already on disk.
 // llama-server requires the file to be present when started with --models-preset.
 func ensureManagedINI(modelsDir string) {
-	path := filepath.Join(modelsDir, "managed.ini")
+	path := filepath.Join(modelsDir, "models.ini")
 	if _, err := os.Stat(path); err == nil {
 		return
 	}
@@ -259,8 +259,8 @@ func ensureManagedINI(modelsDir string) {
 	}
 
 	if err := os.WriteFile(path, []byte(sb.String()), 0664); err != nil {
-		log.Printf("warning: could not create managed.ini: %v", err)
+		log.Printf("warning: could not create models.ini: %v", err)
 	} else if len(entries) > 0 {
-		log.Printf("created managed.ini with %d existing model(s)", len(entries))
+		log.Printf("created models.ini with %d existing model(s)", len(entries))
 	}
 }

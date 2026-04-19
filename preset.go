@@ -13,7 +13,7 @@ type presetManager struct {
 
 func newPresetManager(cfg Config) *presetManager {
 	return &presetManager{
-		path: filepath.Join(cfg.ModelsDir, "managed.ini"),
+		path: filepath.Join(cfg.ModelsDir, "models.ini"),
 		cfg:  cfg,
 	}
 }
@@ -60,7 +60,7 @@ func (p *presetManager) UpsertModelKeys(name string, kvs map[string]string) erro
 	return ini.UpsertSectionKeys(p.path, name, kvs)
 }
 
-// ReadRaw returns the raw body text of the model's section in managed.ini,
+// ReadRaw returns the raw body text of the model's section in models.ini,
 // preserving comments and blank lines exactly as they appear.
 func (p *presetManager) ReadRaw(name string) (string, error) {
 	return ini.ReadSectionRaw(p.path, name)

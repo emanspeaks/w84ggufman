@@ -524,7 +524,7 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 
 		modelPath := findModelFile(job.destDir, job.pattern)
 		if err := d.preset.AddModel(job.name, modelPath, mmprojAbsPath); err != nil {
-			d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update managed.ini: %v", err))
+			d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update models.ini: %v", err))
 		}
 	}
 
