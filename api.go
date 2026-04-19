@@ -203,15 +203,25 @@ type statusResponse struct {
 	Disk               diskInfo `json:"disk"`
 	WarnDownloadBytes  uint64   `json:"warnDownloadBytes"`
 	VramBytes          uint64   `json:"vramBytes"`
+	VramUsedBytes      uint64   `json:"vramUsedBytes"`
+	VramUsedKnown      bool     `json:"vramUsedKnown"`
 	WarnVramBytes      uint64   `json:"warnVramBytes"`
+	LoadedModels       []string `json:"loadedModels"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	reachable := true
+	var loadedIDs []string
 	resp, err := http.Get(s.cfg.LlamaServerURL + "/v1/models")
 	if err != nil {
 		reachable = false
 	} else {
+		var lmr llamaModelsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&lmr); err == nil {
+			for _, m := range lmr.Data {
+				loadedIDs = append(loadedIDs, m.ID)
+			}
+		}
 		resp.Body.Close()
 	}
 	active, inProgress := s.dl.activeInfo()
@@ -222,6 +232,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		pct = 80
 	}
 	warnVram := uint64(float64(s.vramBytes) * pct / 100)
+	vramUsed, vramUsedKnown := detectVRAMUsedBytes()
 	writeJSON(w, statusResponse{
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
@@ -230,7 +241,10 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Disk:               disk,
 		WarnDownloadBytes:  warnBytes,
 		VramBytes:          s.vramBytes,
+		VramUsedBytes:      vramUsed,
+		VramUsedKnown:      vramUsedKnown,
 		WarnVramBytes:      warnVram,
+		LoadedModels:       loadedIDs,
 	})
 }
 

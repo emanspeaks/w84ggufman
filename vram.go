@@ -76,3 +76,59 @@ func detectVRAMBytes() uint64 {
 	log.Printf("VRAM: could not auto-detect; set vramGiB in config to enable per-quant warnings")
 	return 0
 }
+
+// detectVRAMUsedBytes probes the system for current GPU memory usage in bytes.
+// Returns (used, true) on success, (0, false) when measurement is not available.
+// AMD unified-memory APUs are skipped to avoid a kernel crash (CVE-2025-40289).
+func detectVRAMUsedBytes() (uint64, bool) {
+	// NVIDIA via nvidia-smi
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "nvidia-smi",
+		"--query-gpu=memory.used", "--format=csv,noheader,nounits").Output(); err == nil {
+		var total uint64
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if mib, err := strconv.ParseUint(strings.TrimSpace(line), 10, 64); err == nil {
+				total += mib << 20 // MiB → bytes
+			}
+		}
+		if total > 0 {
+			return total, true
+		}
+	}
+
+	// AMD: reading mem_info_vram_used on APUs (unified memory) can crash the kernel
+	// (CVE-2025-40289). Skip if TTM pages_limit indicates we're on an APU.
+	isAPU := false
+	if data, err := os.ReadFile("/sys/module/ttm/parameters/pages_limit"); err == nil {
+		if pages, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			isAPU = pages*4096 > 1<<30
+		}
+	}
+	if !isAPU {
+		if matches, _ := filepath.Glob("/sys/class/drm/card*/device/mem_info_vram_used"); len(matches) > 0 {
+			var total uint64
+			for _, p := range matches {
+				if data, err := os.ReadFile(p); err == nil {
+					if b, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+						total += b
+					}
+				}
+			}
+			if total > 0 {
+				return total, true
+			}
+		}
+	}
+
+	// Apple Silicon: iogpu.wired_size is the current GPU-wired memory allocation in bytes.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if out, err := exec.CommandContext(ctx2, "sysctl", "-n", "iogpu.wired_size").Output(); err == nil {
+		if b, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); err == nil && b > 0 {
+			return b, true
+		}
+	}
+
+	return 0, false
+}

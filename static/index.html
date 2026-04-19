@@ -281,8 +281,9 @@
   html.light #status-bar-label { color: #94a3b8; border-right-color: #e2e8f0; }
   html.light #status-bar.active #status-bar-text { color: #0f172a; }
   html.light #status-bar-chevron { color: #cbd5e1; }
-  /* ── Disk bar ────────────────────────────────────────────────────────────── */
-  .disk-bar-wrap { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: #64748b; flex-shrink: 0; }
+  /* ── Resource bars (disk + VRAM) ─────────────────────────────────────────── */
+  .resource-bars { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
+  .disk-bar-wrap { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: #64748b; }
   .disk-bar { height: 6px; width: 80px; background: #1e293b; border-radius: 3px; overflow: hidden; }
   .disk-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
   .disk-bar-fill.ok   { background: #22c55e; }
@@ -379,9 +380,15 @@
     <h1>w84ggufman<small>GGUF Manager</small></h1>
     <span id="app-version"></span>
   </div>
-  <div class="disk-bar-wrap" id="disk-info" style="display:none">
-    <div class="disk-bar"><div class="disk-bar-fill ok" id="disk-bar-fill" style="width:0%"></div></div>
-    <span id="disk-text"></span>
+  <div class="resource-bars">
+    <div class="disk-bar-wrap" id="disk-info" style="display:none">
+      <div class="disk-bar"><div class="disk-bar-fill ok" id="disk-bar-fill" style="width:0%"></div></div>
+      <span id="disk-text"></span>
+    </div>
+    <div class="disk-bar-wrap" id="vram-info" style="display:none">
+      <div class="disk-bar"><div class="disk-bar-fill ok" id="vram-bar-fill" style="width:0%"></div></div>
+      <span id="vram-text"></span>
+    </div>
   </div>
   <div class="status-pill-wrap">
     <span id="status-indicator" class="status-unknown" title="Click for options">connecting…</span>
@@ -596,6 +603,7 @@ function renderLocalModels(models) {
   for (const m of models) {
     const card = document.createElement('div');
     card.className = 'model-card' + (m.repoId ? ' clickable' : '');
+    card.dataset.modelName = m.name;
     const visionBadge = m.isVision ? ' <span class="badge badge-vision">Vision</span>' : '';
     const presetWarn = m.isVision && !m.inPreset
       ? ' <span class="badge badge-warn-preset" title="Not in managed.ini — add to preset so llama-server loads it">Preset missing</span>'
@@ -609,7 +617,7 @@ function renderLocalModels(models) {
         ${repoLine}
         <span class="model-detail">
           ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}
-          &nbsp;<span class="badge ${m.loaded ? 'badge-loaded' : 'badge-unloaded'}">${m.loaded ? 'Loaded' : 'Unloaded'}</span>
+          &nbsp;<span class="badge loaded-badge ${m.loaded ? 'badge-loaded' : 'badge-unloaded'}" title="Loaded = currently active in llama-server">${m.loaded ? 'Loaded' : 'Unloaded'}</span>
         </span>
       </div>
       <div class="model-actions">
@@ -1112,8 +1120,28 @@ async function pollStatus() {
       document.getElementById('disk-text').textContent = formatBytes(s.disk.freeBytes) + ' free';
       document.getElementById('disk-info').style.display = 'flex';
     }
+    if (s.vramUsedKnown && s.vramBytes > 0) {
+      const pct = Math.round(s.vramUsedBytes / s.vramBytes * 100);
+      const fill = document.getElementById('vram-bar-fill');
+      fill.style.width = pct + '%';
+      fill.className = 'disk-bar-fill ' + (pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : 'ok');
+      document.getElementById('vram-text').textContent =
+        'VRAM: ' + formatBytes(s.vramUsedBytes) + ' / ' + formatBytes(s.vramBytes);
+      document.getElementById('vram-info').style.display = 'flex';
+    }
     if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
     if (s.warnVramBytes) warnVramBytes = s.warnVramBytes;
+    // Update loaded badges on existing cards without re-rendering
+    if (s.loadedModels) {
+      const loadedSet = new Set(s.loadedModels);
+      document.querySelectorAll('[data-model-name]').forEach(card => {
+        const badge = card.querySelector('.loaded-badge');
+        if (!badge) return;
+        const isLoaded = loadedSet.has(card.dataset.modelName);
+        badge.className = 'badge loaded-badge ' + (isLoaded ? 'badge-loaded' : 'badge-unloaded');
+        badge.textContent = isLoaded ? 'Loaded' : 'Unloaded';
+      });
+    }
     if (s.downloadInProgress && !activeEventSource) {
       setDownloadState(true);
       openSSE();
@@ -1125,7 +1153,7 @@ async function pollStatus() {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
-document.getElementById('refresh-btn').addEventListener('click', fetchLocalModels);
+document.getElementById('refresh-btn').addEventListener('click', () => { fetchLocalModels(); pollStatus(); });
 document.getElementById('browse-btn').addEventListener('click', browseRepo);
 document.getElementById('restart-btn').addEventListener('click', restartService);
 document.getElementById('restart-self-btn').addEventListener('click', restartSelf);
