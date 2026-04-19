@@ -114,6 +114,9 @@ in {
     users.users.${cfg.serviceUser} = lib.mkIf (cfg.serviceUser == "w84ggufman") {
       isSystemUser = true;
       group        = cfg.serviceGroup;
+      # 'render' group gives access to /dev/dri/renderD* for AMD VRAM monitoring
+      # via the AMDGPU_INFO_MEMORY DRM ioctl. Safe to include on non-AMD systems.
+      extraGroups  = [ "render" ];
       description  = "w84ggufman service user";
     };
 
@@ -133,6 +136,9 @@ in {
         ExecStart  = "${cfg.package}/bin/w84ggufman --config ${configFile}";
         User       = cfg.serviceUser;
         Group      = cfg.serviceGroup;
+        # Grant render-group access at runtime for AMD VRAM ioctl, even when
+        # running as a pre-existing user not in the render group.
+        SupplementaryGroups = "render";
         Restart    = "on-failure";
         RestartSec = "5s";
         UMask      = "0002";

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -110,30 +111,49 @@ type drmAmdgpuInfoReq struct {
 	_             [16]byte // union — no sub-fields needed for AMDGPU_INFO_MEMORY
 }
 
-// findAMDRenderDevice returns the first /dev/dri/renderD* node whose sysfs driver
-// symlink points to amdgpu. Returns "" if none is found.
-func findAMDRenderDevice() string {
-	driverLinks, _ := filepath.Glob("/sys/class/drm/card*/device/driver")
-	for _, link := range driverLinks {
-		target, err := os.Readlink(link)
-		if err != nil || !strings.Contains(filepath.Base(target), "amdgpu") {
-			continue
+// amdRenderDevice returns the path to the first amdgpu DRM render node, found
+// once at first call and cached. Logs success or failure once to the system log.
+var (
+	amdDevOnce sync.Once
+	amdDevPath string
+)
+
+func amdRenderDevice() string {
+	amdDevOnce.Do(func() {
+		driverLinks, _ := filepath.Glob("/sys/class/drm/card*/device/driver")
+		for _, link := range driverLinks {
+			target, err := os.Readlink(link)
+			if err != nil {
+				continue
+			}
+			if !strings.Contains(filepath.Base(target), "amdgpu") {
+				continue
+			}
+			cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // e.g. "card0"
+			if !strings.HasPrefix(cardName, "card") {
+				continue
+			}
+			n, err := strconv.ParseUint(cardName[4:], 10, 32)
+			if err != nil {
+				continue
+			}
+			renderPath := "/dev/dri/renderD" + strconv.FormatUint(128+n, 10)
+			if _, err := os.Stat(renderPath); err == nil {
+				amdDevPath = renderPath
+				log.Printf("VRAM: AMD render device: %s (card %s)", renderPath, cardName)
+				return
+			}
+			log.Printf("VRAM: amdgpu found on %s but render node %s missing", cardName, renderPath)
 		}
-		// link = /sys/class/drm/card0/device/driver → card dir = /sys/class/drm/card0
-		cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // "card0"
-		if !strings.HasPrefix(cardName, "card") {
-			continue
+		if amdDevPath == "" {
+			if len(driverLinks) == 0 {
+				log.Printf("VRAM: no DRM card entries in sysfs; AMD usage unavailable")
+			} else {
+				log.Printf("VRAM: no amdgpu render node found among %d DRM card(s)", len(driverLinks))
+			}
 		}
-		n, err := strconv.ParseUint(cardName[4:], 10, 32)
-		if err != nil {
-			continue
-		}
-		renderPath := "/dev/dri/renderD" + strconv.FormatUint(128+n, 10)
-		if _, err := os.Stat(renderPath); err == nil {
-			return renderPath
-		}
-	}
-	return ""
+	})
+	return amdDevPath
 }
 
 // queryAMDGPUVRAMUsed opens the given DRM render node and issues the
@@ -141,6 +161,7 @@ func findAMDRenderDevice() string {
 func queryAMDGPUVRAMUsed(devicePath string) (uint64, bool) {
 	f, err := os.Open(devicePath)
 	if err != nil {
+		log.Printf("VRAM: open %s: %v", devicePath, err)
 		return 0, false
 	}
 	defer f.Close()
@@ -157,6 +178,7 @@ func queryAMDGPUVRAMUsed(devicePath string) (uint64, bool) {
 		uintptr(unsafe.Pointer(&req)),
 	)
 	if errno != 0 {
+		log.Printf("VRAM: AMDGPU_INFO_MEMORY ioctl on %s: errno %d", devicePath, errno)
 		return 0, false
 	}
 	return mem.VRAM.HeapUsage, true
@@ -183,7 +205,8 @@ func detectVRAMUsedBytes() (uint64, bool) {
 
 	// AMD via DRM ioctl (AMDGPU_INFO_MEMORY). Works on both APU and discrete GPU,
 	// unlike sysfs mem_info_vram_used which is broken on APUs (CVE-2025-40289).
-	if dev := findAMDRenderDevice(); dev != "" {
+	// Requires the process to be in the 'render' group (or root).
+	if dev := amdRenderDevice(); dev != "" {
 		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
 			return used, true
 		}
