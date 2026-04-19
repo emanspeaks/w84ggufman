@@ -288,17 +288,19 @@ func detectVRAMUsedBytes() (uint64, bool) {
 		}
 	}
 
-	// AMD: try DRM ioctl first (AMDGPU_INFO_MEMORY), fall back to fdinfo.
-	// The ioctl requires render-group access; fdinfo (/proc/*/fdinfo/*) works
-	// without it and is the approach used by nvtop on unified-memory APUs.
-	dev := amdRenderDevice() // also populates amdDevPCIAddr
-	if dev != "" {
-		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
+	// AMD: fdinfo first (nvtop's approach), ioctl as fallback.
+	// The fdinfo sum of drm-memory-vram across unique DRM clients matches what
+	// nvtop reports and correctly reflects TTM-pool allocations on unified-memory
+	// APUs. The ioctl (AMDGPU_INFO_MEMORY) returns only the BIOS carve-out heap
+	// usage on APUs, under-counting allocations that land in the TTM pool.
+	dev := amdRenderDevice() // populates amdDevPCIAddr regardless of render node
+	if amdDevPCIAddr != "" {
+		if used, ok := amdFDInfoVRAMUsed(amdDevPCIAddr); ok {
 			return used, true
 		}
 	}
-	if amdDevPCIAddr != "" {
-		if used, ok := amdFDInfoVRAMUsed(amdDevPCIAddr); ok {
+	if dev != "" {
+		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
 			return used, true
 		}
 	}
