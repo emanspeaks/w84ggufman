@@ -64,8 +64,11 @@ func main() {
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
 	mux.HandleFunc("POST /api/restart", srv.handleRestart)
+	mux.HandleFunc("POST /api/restart-self", srv.handleRestartSelf)
 	mux.HandleFunc("GET /api/preset", srv.handleGetPreset)
 	mux.HandleFunc("POST /api/preset/global", srv.handleUpdatePresetGlobal)
+	mux.HandleFunc("GET /api/preset/raw/{name}", srv.handleGetPresetRaw)
+	mux.HandleFunc("PUT /api/preset/raw/{name}", srv.handleUpdatePresetRaw)
 	mux.HandleFunc("POST /api/preset/{name}", srv.handleUpdatePresetModel)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)

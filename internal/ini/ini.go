@@ -318,6 +318,128 @@ func UpsertSectionKeys(path, section string, kvs map[string]string) error {
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0664)
 }
 
+// ReadSectionRaw returns the raw body of the named section — every line
+// between the section header and the next section header — exactly as it
+// appears in the file, including inline comments and blank lines.
+// Leading and trailing blank lines within the body are trimmed.
+// Returns an empty string (no error) if the section is not found or the
+// file does not exist.
+func ReadSectionRaw(path, section string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	src := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	lines := strings.Split(src, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	header := "[" + section + "]"
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == header {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return "", nil
+	}
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+			end = i
+			break
+		}
+	}
+
+	body := lines[start+1 : end]
+	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
+		body = body[1:]
+	}
+	for len(body) > 0 && strings.TrimSpace(body[len(body)-1]) == "" {
+		body = body[:len(body)-1]
+	}
+	if len(body) == 0 {
+		return "", nil
+	}
+	return strings.Join(body, "\n"), nil
+}
+
+// ReplaceSectionBody replaces the body of the named section (everything
+// between its header line and the next section) with newBody, preserving
+// the section's position in the file. Other sections and all comments
+// outside the target section are left unchanged.
+// If the section does not exist it is appended. If the file does not
+// exist it is created.
+func ReplaceSectionBody(path, section, newBody string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			f, err2 := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0664)
+			if err2 != nil {
+				return err2
+			}
+			defer f.Close()
+			bw := bufio.NewWriter(f)
+			fmt.Fprintf(bw, "[%s]\n%s\n", section, newBody)
+			return bw.Flush()
+		}
+		return err
+	}
+
+	src := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	lines := strings.Split(src, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	header := "[" + section + "]"
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == header {
+			start = i
+			break
+		}
+	}
+
+	if start == -1 {
+		// Append new section.
+		f, err2 := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0664)
+		if err2 != nil {
+			return err2
+		}
+		defer f.Close()
+		bw := bufio.NewWriter(f)
+		fmt.Fprintf(bw, "\n[%s]\n%s\n", section, newBody)
+		return bw.Flush()
+	}
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+			end = i
+			break
+		}
+	}
+
+	bodyLines := strings.Split(strings.ReplaceAll(newBody, "\r\n", "\n"), "\n")
+	out := make([]string, 0, start+1+len(bodyLines)+(len(lines)-end))
+	out = append(out, lines[:start+1]...) // keep [section] header
+	out = append(out, bodyLines...)
+	out = append(out, lines[end:]...)
+
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0664)
+}
+
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

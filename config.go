@@ -14,6 +14,7 @@ type Config struct {
 	WarnDownloadGiB float64           `json:"warnDownloadGiB"`
 	VramGiB         float64           `json:"vramGiB"`         // 0 = auto-detect
 	WarnVramPercent float64           `json:"warnVramPercent"` // % of VRAM; default 80
+	SelfService     string            `json:"selfService"`     // systemd unit for self-restart (empty = disabled)
 	PresetGlobal    map[string]string `json:"presetGlobal"`
 }
 
@@ -27,6 +28,7 @@ func defaultConfig() Config {
 		WarnDownloadGiB: 10.0,
 		VramGiB:         0,
 		WarnVramPercent: 80,
+		SelfService:     "w84ggufman.service",
 		PresetGlobal: map[string]string{
 			"ctx-size":     "65536",
 			"flash-attn":   "on",

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/emanspeaks/w84ggufman/internal/ini"
 	"github.com/yuin/goldmark"
@@ -418,6 +419,58 @@ func (s *server) handleUpdatePresetModel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleGetPresetRaw(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "invalid model name", http.StatusBadRequest)
+		return
+	}
+	body, err := s.preset.ReadRaw(name)
+	if err != nil {
+		http.Error(w, "failed to read preset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(body))
+}
+
+func (s *server) handleUpdatePresetRaw(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "invalid model name", http.StatusBadRequest)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		http.Error(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body := strings.TrimRight(string(raw), "\r\n")
+	if err := s.preset.WriteRaw(name, body); err != nil {
+		http.Error(w, "failed to write preset: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleRestartSelf(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.SelfService == "" {
+		http.Error(w, "selfService not configured", http.StatusNotImplemented)
+		return
+	}
+	log.Printf("restarting self service %s", s.cfg.SelfService)
+	w.WriteHeader(http.StatusAccepted)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if err := restartService(s.cfg.SelfService); err != nil {
+			log.Printf("error: restart self %s: %v", s.cfg.SelfService, err)
+		}
+	}()
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

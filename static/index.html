@@ -100,6 +100,34 @@
   .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
   .badge-loaded   { background: #14532d; color: #86efac; }
   .badge-unloaded { background: #1e293b; color: #64748b; }
+  .model-actions { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; }
+  /* ── Config modal ──────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.65); backdrop-filter: blur(2px);
+    z-index: 500;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .modal {
+    background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+    padding: 1.25rem 1.5rem 1.5rem;
+    width: min(700px, 95vw); max-height: 85vh;
+    display: flex; flex-direction: column; gap: 0.875rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+  }
+  .modal-title { font-size: 0.95rem; font-weight: 600; color: #f1f5f9; }
+  .modal-title small { display: block; font-size: 0.72rem; font-weight: 400; color: #64748b; margin-top: 2px; font-family: monospace; }
+  .modal textarea {
+    flex: 1; min-height: 260px;
+    background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+    color: #e2e8f0; font-family: 'Menlo','Consolas',monospace; font-size: 0.825rem;
+    line-height: 1.5; padding: 0.75rem; resize: vertical; outline: none;
+  }
+  .modal textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+  .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+  html.light .modal { background: #f8fafc; border-color: #e2e8f0; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+  html.light .modal-title { color: #1e293b; }
+  html.light .modal textarea { background: #fff; border-color: #cbd5e1; color: #0f172a; }
   /* ── Right panel ─────────────────────────────────────────────────────── */
   .hint { font-size: 0.8rem; color: #64748b; margin-bottom: 0.875rem; }
   .hint a { color: #60a5fa; }
@@ -358,7 +386,8 @@
   <div class="status-pill-wrap">
     <span id="status-indicator" class="status-unknown" title="Click for options">connecting…</span>
     <div class="status-menu" id="status-menu">
-      <button id="restart-btn">Restart Service</button>
+      <button id="restart-btn">Restart llama-server</button>
+      <button id="restart-self-btn">Restart w84ggufman</button>
     </div>
   </div>
   <button id="theme-toggle" title="Toggle light/dark mode">☀</button>
@@ -583,7 +612,10 @@ function renderLocalModels(models) {
           &nbsp;<span class="badge ${m.loaded ? 'badge-loaded' : 'badge-unloaded'}">${m.loaded ? 'Loaded' : 'Unloaded'}</span>
         </span>
       </div>
-      <button class="btn-danger delete-btn">Delete</button>
+      <div class="model-actions">
+        <button class="btn-secondary config-btn">Config…</button>
+        <button class="btn-danger delete-btn">Delete</button>
+      </div>
     `;
     if (m.repoId) {
       card.addEventListener('click', (e) => {
@@ -592,6 +624,7 @@ function renderLocalModels(models) {
         browseRepo();
       });
     }
+    card.querySelector('.config-btn').addEventListener('click', () => openConfigModal(m.name));
     card.querySelector('.delete-btn').addEventListener('click', () => deleteModel(m.name));
     list.appendChild(card);
   }
@@ -947,6 +980,95 @@ async function restartService() {
   }
 }
 
+async function restartSelf() {
+  document.getElementById('status-menu').classList.remove('open');
+  if (!confirm('Restart w84ggufman?\n\nThe page will reload automatically once it comes back up.')) return;
+  const btn = document.getElementById('restart-self-btn');
+  btn.disabled = true;
+  setStatusBar('Restart', 'Restarting w84ggufman…', true);
+  try {
+    await fetch('/api/restart-self', { method: 'POST' });
+  } catch (_) { /* process dying causes network error — that's expected */ }
+  // Wait for the server to go down then come back up.
+  await new Promise(r => setTimeout(r, 1200));
+  for (let i = 0; i < 30; i++) {
+    try {
+      const r = await fetch('/api/status');
+      if (r.ok) { location.reload(); return; }
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  setStatusBar('Error', 'w84ggufman did not come back — check the service logs', false);
+  btn.disabled = false;
+}
+
+// ── Config modal ───────────────────────────────────────────────────────────
+
+async function openConfigModal(name) {
+  let body = '';
+  try {
+    const resp = await fetch('/api/preset/raw/' + encodeURIComponent(name));
+    if (resp.ok) body = await resp.text();
+  } catch (_) {}
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-title" id="modal-title">
+        Config
+        <small>${esc(name)}</small>
+      </div>
+      <textarea spellcheck="false" placeholder="; llama-server preset settings for this model\nmodel = /path/to/model.gguf\nctx-size = 65536">${esc(body)}</textarea>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="modal-cancel">Cancel</button>
+        <button class="btn-primary" id="modal-save">Save</button>
+      </div>
+    </div>
+  `;
+
+  const ta = backdrop.querySelector('textarea');
+
+  function closeModal() {
+    document.body.removeChild(backdrop);
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') closeModal();
+  }
+
+  backdrop.querySelector('#modal-cancel').addEventListener('click', closeModal);
+
+  backdrop.querySelector('#modal-save').addEventListener('click', async () => {
+    const saveBtn = backdrop.querySelector('#modal-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const resp = await fetch('/api/preset/raw/' + encodeURIComponent(name), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/plain' },
+        body: ta.value,
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      closeModal();
+      setStatusBar('Ready', 'Config saved for ' + name, false);
+    } catch (e) {
+      setStatusBar('Error', 'Save failed: ' + e.message, false);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+
+  // Close on backdrop click (outside the modal box).
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+  document.addEventListener('keydown', onKey);
+
+  document.body.appendChild(backdrop);
+  ta.focus();
+  ta.setSelectionRange(0, 0);
+}
+
 // ── README ─────────────────────────────────────────────────────────────────
 
 async function fetchAndRenderReadme(repoId) {
@@ -1006,6 +1128,7 @@ async function pollStatus() {
 document.getElementById('refresh-btn').addEventListener('click', fetchLocalModels);
 document.getElementById('browse-btn').addEventListener('click', browseRepo);
 document.getElementById('restart-btn').addEventListener('click', restartService);
+document.getElementById('restart-self-btn').addEventListener('click', restartSelf);
 document.getElementById('cancel-dl-btn').addEventListener('click', cancelDownload);
 document.getElementById('status-menu').addEventListener('click', (e) => e.stopPropagation());
 document.getElementById('repo-input').addEventListener('keydown', (e) => {

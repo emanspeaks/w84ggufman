@@ -60,6 +60,18 @@ func (p *presetManager) UpsertModelKeys(name string, kvs map[string]string) erro
 	return ini.UpsertSectionKeys(p.path, name, kvs)
 }
 
+// ReadRaw returns the raw body text of the model's section in managed.ini,
+// preserving comments and blank lines exactly as they appear.
+func (p *presetManager) ReadRaw(name string) (string, error) {
+	return ini.ReadSectionRaw(p.path, name)
+}
+
+// WriteRaw replaces the body of the model's section with raw text,
+// keeping the section's position in the file.
+func (p *presetManager) WriteRaw(name, body string) error {
+	return ini.ReplaceSectionBody(p.path, name, body)
+}
+
 func (p *presetManager) HasModel(name string) (bool, error) {
 	f, err := p.Load()
 	if err != nil {
