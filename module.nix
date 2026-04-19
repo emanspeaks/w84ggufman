@@ -106,6 +106,21 @@ in {
       default = "llm";
       description = "OS group the w84ggufman service runs as. Must have write access to modelsDir.";
     };
+
+    llamaServiceUser = lib.mkOption {
+      type    = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        If set, the llama.cpp systemd service (llamaService) will be configured
+        to run as this user. Setting this to the same value as serviceUser allows
+        w84ggufman to read /proc/<pid>/fdinfo for the llama.cpp process, which is
+        required for accurate AMD GPU VRAM usage monitoring via fdinfo (the same
+        method nvtop uses). Without same-user access the VRAM used bar will show
+        0 / unavailable on AMD systems using ROCm.
+
+        Example: llamaServiceUser = config.services.w84ggufman.serviceUser;
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -114,9 +129,6 @@ in {
     users.users.${cfg.serviceUser} = lib.mkIf (cfg.serviceUser == "w84ggufman") {
       isSystemUser = true;
       group        = cfg.serviceGroup;
-      # 'render' group gives access to /dev/dri/renderD* for AMD VRAM monitoring
-      # via the AMDGPU_INFO_MEMORY DRM ioctl. Safe to include on non-AMD systems.
-      extraGroups  = [ "render" ];
       description  = "w84ggufman service user";
     };
 
@@ -136,13 +148,16 @@ in {
         ExecStart  = "${cfg.package}/bin/w84ggufman --config ${configFile}";
         User       = cfg.serviceUser;
         Group      = cfg.serviceGroup;
-        # Grant render-group access at runtime for AMD VRAM ioctl, even when
-        # running as a pre-existing user not in the render group.
-        SupplementaryGroups = "render";
         Restart    = "on-failure";
         RestartSec = "5s";
         UMask      = "0002";
       };
+    };
+
+    # When llamaServiceUser is set, run llama.cpp as that user so that w84ggufman
+    # (sharing the same UID) can read /proc/<pid>/fdinfo for GPU VRAM monitoring.
+    systemd.services.${cfg.llamaService} = lib.mkIf (cfg.llamaServiceUser != null) {
+      serviceConfig.User = cfg.llamaServiceUser;
     };
 
     # Create hfHome directory and recursively fix any existing files that were

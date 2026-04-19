@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -188,15 +189,11 @@ func amdRenderDevice() string {
 	return amdDevPath
 }
 
-// amdFDInfoVRAMUsed returns total AMD GPU VRAM used by reading /proc/*/fdinfo/*
-// entries for the GPU at pciAddr. This is the approach used by nvtop and works
-// even when the DRM ioctl path is unavailable or returns incomplete data.
-// Usage is summed per unique drm-client-id to avoid double-counting clients
-// that have multiple file descriptors open to the same device.
-func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
-	fdinfos, _ := filepath.Glob("/proc/[0-9]*/fdinfo/*")
+// amdFDInfoVRAMUsedFrom sums AMD GPU VRAM usage from a list of /proc/*/fdinfo/*
+// paths. Usage is summed per unique drm-client-id to avoid double-counting
+// clients that have multiple file descriptors open to the same device.
+func amdFDInfoVRAMUsedFrom(fdinfos []string, pciAddr string) (uint64, bool) {
 	seen := make(map[string]uint64) // drm-client-id → max vram KiB seen
-
 	for _, path := range fdinfos {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -205,7 +202,6 @@ func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
 		var clientID string
 		var vramKiB uint64
 		matchesDev := false
-
 		for _, line := range strings.Split(string(data), "\n") {
 			k, v, ok := strings.Cut(line, ":\t")
 			if !ok {
@@ -230,7 +226,6 @@ func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
 			}
 		}
 	}
-
 	if len(seen) == 0 {
 		return 0, false
 	}
@@ -239,6 +234,24 @@ func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
 		total += kib * 1024
 	}
 	return total, true
+}
+
+// amdFDInfoVRAMUsedForPID reads fdinfo for a single process. This is the
+// preferred path: targeted, fast, and avoids scanning all of /proc. It requires
+// that the caller runs as the same user as the target process (Linux denies
+// /proc/<pid>/fdinfo reads across different UIDs without CAP_SYS_PTRACE).
+func amdFDInfoVRAMUsedForPID(pid uint32, pciAddr string) (uint64, bool) {
+	fdinfos, _ := filepath.Glob(fmt.Sprintf("/proc/%d/fdinfo/*", pid))
+	return amdFDInfoVRAMUsedFrom(fdinfos, pciAddr)
+}
+
+// amdFDInfoVRAMUsed scans all /proc/*/fdinfo/* entries. Works when running as
+// root or as the same user as the GPU-using processes (e.g. nvtop run by the
+// model-server user). A systemd service running as a different user will see
+// only its own empty FD set and return (0, false).
+func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
+	fdinfos, _ := filepath.Glob("/proc/[0-9]*/fdinfo/*")
+	return amdFDInfoVRAMUsedFrom(fdinfos, pciAddr)
 }
 
 // queryAMDGPUVRAMUsed opens the given DRM render node and issues the
@@ -275,7 +288,11 @@ func queryAMDGPUVRAMUsed(devicePath string) (uint64, bool) {
 
 // detectVRAMUsedBytes probes the system for current GPU memory usage in bytes.
 // Returns (used, true) on success, (0, false) when measurement is not available.
-func detectVRAMUsedBytes() (uint64, bool) {
+// detectVRAMUsedBytes probes the system for current GPU memory usage in bytes.
+// llamaService is the systemd unit name of the llama.cpp server (e.g.
+// "llama-cpp.service"); if non-empty it enables targeted AMD fdinfo reads.
+// Returns (used, true) on success, (0, false) when measurement is not available.
+func detectVRAMUsedBytes(llamaService string) (uint64, bool) {
 	// NVIDIA via nvidia-smi
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -292,17 +309,25 @@ func detectVRAMUsedBytes() (uint64, bool) {
 		}
 	}
 
-	// AMD: ioctl first (AMDGPU_INFO_MEMORY, VRAM+GTT heaps), fdinfo as fallback.
-	// The ioctl is preferred because it works without ptrace/root access; the
-	// systemd service can read its own render node but not other processes'
-	// /proc/*/fdinfo/*. fdinfo is kept as a fallback for root/user-mode use.
-	dev := amdRenderDevice() // also populates amdDevPCIAddr
-	if dev != "" {
-		if used, ok := queryAMDGPUVRAMUsed(dev); ok {
-			return used, true
-		}
-	}
+	// AMD: fdinfo-based measurement (the approach used by nvtop).
+	// The DRM ioctl (AMDGPU_INFO_MEMORY) is intentionally NOT used here: it only
+	// sees small baseline heap usage and misses ROCm/KFD allocations entirely,
+	// and opening the render node alongside llama.cpp may cause driver errors.
+	//
+	// fdinfo requires running as the same UID as the GPU consumer (Linux denies
+	// /proc/<pid>/fdinfo reads across UIDs without CAP_SYS_PTRACE). We try:
+	//   1. Targeted read of the llama.cpp service PID — fast, correct once both
+	//      services share a user (configure llamaServiceUser in module.nix).
+	//   2. Full /proc scan — works as root or when all GPU processes share our UID.
+	amdRenderDevice() // side-effect: populates amdDevPCIAddr
 	if amdDevPCIAddr != "" {
+		if llamaService != "" {
+			if pid := serviceMainPID(llamaService); pid > 0 {
+				if used, ok := amdFDInfoVRAMUsedForPID(pid, amdDevPCIAddr); ok {
+					return used, true
+				}
+			}
+		}
 		if used, ok := amdFDInfoVRAMUsed(amdDevPCIAddr); ok {
 			return used, true
 		}

@@ -404,7 +404,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		pct = 80
 	}
 	warnVram := uint64(float64(s.vramBytes) * pct / 100)
-	vramUsed, vramUsedKnown := detectVRAMUsedBytes()
+	vramUsed, vramUsedKnown := detectVRAMUsedBytes(s.cfg.LlamaService)
 	writeJSON(w, statusResponse{
 		LlamaReachable:     reachable,
 		DownloadInProgress: inProgress,
