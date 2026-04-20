@@ -221,14 +221,20 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 				_, loaded := loadedModels[lsm.Name]
 
 				repoID := ""
-				parentDir := filepath.Dir(modelDir)
-				if parentDir != s.cfg.ModelsDir && parentDir != modelDir {
-					repoID = readModelMeta(parentDir).RepoID
-					if repoID == "" && len(files) > 0 {
-						repoID = detectRepoIDFromGGUF(modelDir, files)
-						if repoID != "" {
-							_ = writeModelMeta(parentDir, repoID)
+				for dir := filepath.Clean(modelDir); dir != s.cfg.ModelsDir && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+					if meta := readModelMeta(dir); meta.RepoID != "" {
+						repoID = meta.RepoID
+						break
+					}
+				}
+				if repoID == "" && len(files) > 0 {
+					repoID = detectRepoIDFromGGUF(modelDir, files)
+					if repoID != "" {
+						writeDir := modelMetaParentDir(modelDir, s.cfg.ModelsDir)
+						if writeDir == "" {
+							writeDir = modelDir
 						}
+						_ = writeModelMeta(writeDir, repoID)
 					}
 				}
 

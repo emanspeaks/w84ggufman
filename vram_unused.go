@@ -1,0 +1,294 @@
+//go:build ignore
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"github.com/coreos/go-systemd/v22/dbus"
+)
+
+// ── AMD DRM ioctl ────────────────────────────────────────────────────────────
+//
+// DRM_IOCTL_AMDGPU_INFO = _IOW('d', 0x45, struct drm_amdgpu_info)
+// sizeof(struct drm_amdgpu_info) == 32 on x86_64/arm64 (8+4+4+16-byte union).
+// AMDGPU_INFO_MEMORY (0x19) returns drm_amdgpu_memory_info (3×4×8 = 96 bytes).
+
+const drmIoctlAmdgpuInfo = uintptr(0x40206445)
+const amdgpuInfoMemory = uint32(0x19)
+
+type drmAmdgpuHeapInfo struct {
+	TotalHeapSize  uint64
+	UsableHeapSize uint64
+	HeapUsage      uint64
+	MaxAllocation  uint64
+}
+
+type drmAmdgpuMemoryInfo struct {
+	VRAM          drmAmdgpuHeapInfo
+	CpuAccessVRAM drmAmdgpuHeapInfo
+	GTT           drmAmdgpuHeapInfo
+}
+
+// drmAmdgpuInfoReq matches struct drm_amdgpu_info from include/uapi/drm/amdgpu_drm.h.
+// Layout: return_pointer(8) + return_size(4) + query(4) + union(16) = 32 bytes.
+type drmAmdgpuInfoReq struct {
+	ReturnPointer uint64
+	ReturnSize    uint32
+	Query         uint32
+	_             [16]byte // union — no sub-fields needed for AMDGPU_INFO_MEMORY
+}
+
+// amdRenderDevice returns the path to the first amdgpu DRM render node, found
+// once at first call and cached. Also populates amdDevPCIAddr for fdinfo use.
+// Logs success or failure once to the system log.
+var (
+	amdDevOnce    sync.Once
+	amdDevPath    string
+	amdDevPCIAddr string // PCI address e.g. "0000:c1:00.0", for fdinfo fallback
+)
+
+func amdRenderDevice() string {
+	amdDevOnce.Do(func() {
+		driverLinks, _ := filepath.Glob("/sys/class/drm/card*/device/driver")
+		for _, link := range driverLinks {
+			target, err := os.Readlink(link)
+			if err != nil || !strings.Contains(filepath.Base(target), "amdgpu") {
+				continue
+			}
+			cardName := filepath.Base(filepath.Dir(filepath.Dir(link))) // e.g. "card1"
+			if !strings.HasPrefix(cardName, "card") {
+				continue
+			}
+
+			// Resolve the PCI device path. Render minor numbers are assigned only
+			// to render-capable DRM devices and don't always equal 128+card_number.
+			// On APUs where card0 is display-only, card1 gets renderD128 not D129.
+			// Walking the sysfs device hierarchy finds the correct node directly.
+			pciDev, pciErr := filepath.EvalSymlinks("/sys/class/drm/" + cardName + "/device")
+			if pciErr == nil && amdDevPCIAddr == "" {
+				amdDevPCIAddr = filepath.Base(pciDev)
+			}
+			if pciErr == nil {
+				nodes, _ := filepath.Glob(pciDev + "/drm/renderD*")
+				for _, node := range nodes {
+					renderPath := "/dev/dri/" + filepath.Base(node)
+					if _, err := os.Stat(renderPath); err == nil {
+						amdDevPath = renderPath
+						log.Printf("VRAM: AMD render device: %s (card %s)", renderPath, cardName)
+						return
+					}
+				}
+			}
+
+			// Fallback: assume renderD(128+N) for cardN.
+			n, err := strconv.ParseUint(cardName[4:], 10, 32)
+			if err != nil {
+				continue
+			}
+			renderPath := "/dev/dri/renderD" + strconv.FormatUint(128+n, 10)
+			if _, err := os.Stat(renderPath); err == nil {
+				amdDevPath = renderPath
+				log.Printf("VRAM: AMD render device: %s (card %s, by number)", renderPath, cardName)
+				return
+			}
+			log.Printf("VRAM: amdgpu found on %s but no render node found", cardName)
+		}
+		if amdDevPath == "" {
+			if len(driverLinks) == 0 {
+				log.Printf("VRAM: no DRM card entries in sysfs; AMD usage unavailable")
+			} else {
+				log.Printf("VRAM: no amdgpu render node found among %d DRM card(s)", len(driverLinks))
+			}
+		}
+	})
+	return amdDevPath
+}
+
+// amdFDInfoVRAMUsedFrom sums AMD GPU VRAM usage from a list of /proc/*/fdinfo/*
+// paths. Usage is summed per unique drm-client-id to avoid double-counting
+// clients that have multiple file descriptors open to the same device.
+func amdFDInfoVRAMUsedFrom(fdinfos []string, pciAddr string) (uint64, bool) {
+	seen := make(map[string]uint64) // drm-client-id → max vram KiB seen
+	for _, path := range fdinfos {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var clientID string
+		var vramKiB uint64
+		matchesDev := false
+		for _, line := range strings.Split(string(data), "\n") {
+			k, v, ok := strings.Cut(line, ":\t")
+			if !ok {
+				continue
+			}
+			switch strings.TrimSpace(k) {
+			case "drm-pdev":
+				matchesDev = strings.TrimSpace(v) == pciAddr
+			case "drm-client-id":
+				clientID = strings.TrimSpace(v)
+			case "drm-memory-vram":
+				if f := strings.Fields(v); len(f) >= 1 {
+					if n, err2 := strconv.ParseUint(f[0], 10, 64); err2 == nil {
+						vramKiB = n
+					}
+				}
+			}
+		}
+		if matchesDev && clientID != "" {
+			if existing, ok2 := seen[clientID]; !ok2 || vramKiB > existing {
+				seen[clientID] = vramKiB
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return 0, false
+	}
+	var total uint64
+	for _, kib := range seen {
+		total += kib * 1024
+	}
+	return total, true
+}
+
+// amdFDInfoVRAMUsedForPID reads fdinfo for a single process. This is the
+// preferred path: targeted, fast, and avoids scanning all of /proc. It requires
+// that the caller runs as the same user as the target process (Linux denies
+// /proc/<pid>/fdinfo reads across different UIDs without CAP_SYS_PTRACE).
+func amdFDInfoVRAMUsedForPID(pid uint32, pciAddr string) (uint64, bool) {
+	fdinfos, _ := filepath.Glob(fmt.Sprintf("/proc/%d/fdinfo/*", pid))
+	return amdFDInfoVRAMUsedFrom(fdinfos, pciAddr)
+}
+
+// amdFDInfoVRAMUsed scans all /proc/*/fdinfo/* entries. Works when running as
+// root or as the same user as the GPU-using processes (e.g. nvtop run by the
+// model-server user). A systemd service running as a different user will see
+// only its own empty FD set and return (0, false).
+func amdFDInfoVRAMUsed(pciAddr string) (uint64, bool) {
+	fdinfos, _ := filepath.Glob("/proc/[0-9]*/fdinfo/*")
+	return amdFDInfoVRAMUsedFrom(fdinfos, pciAddr)
+}
+
+// queryAMDGPUVRAMUsed opens the given DRM render node and issues the
+// AMDGPU_INFO_MEMORY ioctl to read current VRAM heap usage.
+func queryAMDGPUVRAMUsed(devicePath string) (uint64, bool) {
+	f, err := os.Open(devicePath)
+	if err != nil {
+		log.Printf("VRAM: open %s: %v", devicePath, err)
+		return 0, false
+	}
+	defer f.Close()
+
+	var mem drmAmdgpuMemoryInfo
+	req := drmAmdgpuInfoReq{
+		ReturnPointer: uint64(uintptr(unsafe.Pointer(&mem))),
+		ReturnSize:    uint32(unsafe.Sizeof(mem)),
+		Query:         amdgpuInfoMemory,
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
+		f.Fd(),
+		drmIoctlAmdgpuInfo,
+		uintptr(unsafe.Pointer(&req)),
+	)
+	if errno != 0 {
+		log.Printf("VRAM: AMDGPU_INFO_MEMORY ioctl on %s: errno %d", devicePath, errno)
+		return 0, false
+	}
+	// On unified-memory APUs the driver splits allocations between the VRAM heap
+	// (BIOS carve-out) and the GTT heap (system RAM mapped to GPU address space).
+	// Summing both matches what nvtop reports via fdinfo drm-memory-vram, which
+	// covers all VRAM-domain usage regardless of backing store.
+	return mem.VRAM.HeapUsage + mem.GTT.HeapUsage, true
+}
+
+// detectVRAMUsedBytes probes the system for current GPU memory usage in bytes.
+// llamaService is the systemd unit name of the llama.cpp server (e.g.
+// "llama-cpp.service"); if non-empty it enables targeted AMD fdinfo reads.
+// Returns (used, true) on success, (0, false) when measurement is not available.
+func detectVRAMUsedBytes(llamaService string) (uint64, bool) {
+	// NVIDIA via nvidia-smi
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "nvidia-smi",
+		"--query-gpu=memory.used", "--format=csv,noheader,nounits").Output(); err == nil {
+		var total uint64
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if mib, err := strconv.ParseUint(strings.TrimSpace(line), 10, 64); err == nil {
+				total += mib << 20 // MiB → bytes
+			}
+		}
+		if total > 0 {
+			return total, true
+		}
+	}
+
+	// AMD: fdinfo-based measurement (the approach used by nvtop).
+	// The DRM ioctl (AMDGPU_INFO_MEMORY) is intentionally NOT used here: it only
+	// sees small baseline heap usage and misses ROCm/KFD allocations entirely,
+	// and opening the render node alongside llama.cpp may cause driver errors.
+	//
+	// fdinfo requires running as the same UID as the GPU consumer (Linux denies
+	// /proc/<pid>/fdinfo reads across UIDs without CAP_SYS_PTRACE). We try:
+	//   1. Targeted read of the llama.cpp service PID — fast, correct once both
+	//      services share a user (configure llamaServiceUser in module.nix).
+	//   2. Full /proc scan — works as root or when all GPU processes share our UID.
+	amdRenderDevice() // side-effect: populates amdDevPCIAddr
+	if amdDevPCIAddr != "" {
+		if llamaService != "" {
+			if pid := serviceMainPID(llamaService); pid > 0 {
+				if used, ok := amdFDInfoVRAMUsedForPID(pid, amdDevPCIAddr); ok {
+					return used, true
+				}
+			}
+		}
+		if used, ok := amdFDInfoVRAMUsed(amdDevPCIAddr); ok {
+			return used, true
+		}
+	}
+
+	// Apple Silicon: iogpu.wired_size is the current GPU-wired memory allocation in bytes.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if out, err := exec.CommandContext(ctx2, "sysctl", "-n", "iogpu.wired_size").Output(); err == nil {
+		if b, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); err == nil && b > 0 {
+			return b, true
+		}
+	}
+
+	return 0, false
+}
+
+// serviceMainPID returns the MainPID of a running systemd service, or 0 on error.
+func serviceMainPID(name string) uint32 {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := dbus.NewSystemConnectionContext(ctx)
+	if err != nil {
+		return 0
+	}
+	defer conn.Close()
+	props, err := conn.GetUnitPropertiesContext(ctx, name)
+	if err != nil {
+		return 0
+	}
+	pid, _ := props["MainPID"].(uint32)
+	return pid
+}
+
+// Keep references so unusedfunc doesn't flag these parked entry points.
+var (
+	_ = detectVRAMUsedBytes
+	_ = queryAMDGPUVRAMUsed
+)

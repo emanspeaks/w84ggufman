@@ -231,7 +231,7 @@ func (d *downloader) cancelDownload() {
 // directory (named after the quant) and its own INI section, so quants can be
 // loaded and managed independently in llama-server. Downloads are run
 // sequentially; sidecars are placed in the first quant's directory.
-func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, force bool) error {
+func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, _ bool) error {
 	if len(filenames) == 0 {
 		return fmt.Errorf("at least one filename is required")
 	}

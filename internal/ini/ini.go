@@ -247,9 +247,10 @@ func UpsertSectionKeys(path, section string, kvs map[string]string) error {
 
 	// Accept [*] and [global] as aliases for the global section header.
 	headers := []string{"[" + section + "]"}
-	if section == "*" {
+	switch section {
+	case "*":
 		headers = append(headers, "[global]")
-	} else if section == "global" {
+	case "global":
 		headers = append(headers, "[*]")
 	}
 
