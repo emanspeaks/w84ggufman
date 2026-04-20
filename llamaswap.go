@@ -130,24 +130,24 @@ func (m *llamaSwapManager) ListModels() ([]llamaswap.ModelEntry, error) {
 	return llamaswap.ListModels(doc), nil
 }
 
-// ListGroups returns all groups in config.yaml annotated with membership for modelName.
-func (m *llamaSwapManager) ListGroups(modelName string) ([]llamaswap.GroupInfo, error) {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return nil, err
-	}
-	return llamaswap.ListGroups(doc, modelName), nil
-}
+// // ListGroups returns all groups in config.yaml annotated with membership for modelName.
+// func (m *llamaSwapManager) ListGroups(modelName string) ([]llamaswap.GroupInfo, error) {
+// 	doc, err := llamaswap.LoadFile(m.path)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return llamaswap.ListGroups(doc, modelName), nil
+// }
 
-// SetGroupMembership updates group membership for modelName and saves the file.
-func (m *llamaSwapManager) SetGroupMembership(modelName string, groupNames []string) error {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return err
-	}
-	llamaswap.SetGroupMembership(doc, modelName, groupNames)
-	return llamaswap.WriteFile(m.path, doc)
-}
+// // SetGroupMembership updates group membership for modelName and saves the file.
+// func (m *llamaSwapManager) SetGroupMembership(modelName string, groupNames []string) error {
+// 	doc, err := llamaswap.LoadFile(m.path)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	llamaswap.SetGroupMembership(doc, modelName, groupNames)
+// 	return llamaswap.WriteFile(m.path, doc)
+// }
 
 // ReadAll returns the full contents of config.yaml as a string.
 func (m *llamaSwapManager) ReadAll() (string, error) {

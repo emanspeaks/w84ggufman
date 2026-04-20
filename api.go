@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -53,37 +52,17 @@ func getDiskInfo(path string) (diskInfo, error) {
 	}, nil
 }
 
+// localModel represents one HF repo (or local folder) as a single card.
+// Files contains relative paths from Path for all files in the repo directory.
 type localModel struct {
-	Name        string            `json:"name"`
-	Path        string            `json:"path"`
-	SizeBytes   int64             `json:"sizeBytes"`
-	Files       []string          `json:"files"`
-	Loaded      bool              `json:"loaded"`
-	IsVision    bool              `json:"isVision"`
-	Mmproj      string            `json:"mmproj"`
-	InPreset    bool              `json:"inPreset"`
-	PresetEntry map[string]string `json:"presetEntry,omitempty"`
-	RepoID      string            `json:"repoId,omitempty"`
-}
-
-// modelMetaParentDir returns the direct child of modelsDir that is an ancestor
-// of (or equal to) dir. This is the canonical location for .w84ggufman.json,
-// regardless of how deeply nested the actual model files are. Returns "" when
-// dir is not under modelsDir.
-func modelMetaParentDir(dir, modelsDir string) string {
-	dir = filepath.Clean(dir)
-	modelsDir = filepath.Clean(modelsDir)
-	prev := dir
-	for {
-		parent := filepath.Dir(prev)
-		if parent == modelsDir {
-			return prev
-		}
-		if parent == prev {
-			return "" // reached fs root without crossing modelsDir
-		}
-		prev = parent
-	}
+	RepoID        string   `json:"repoId"` // "org/repo", or "" for unknown
+	Path          string   `json:"path"`   // absolute dir path on disk
+	Files         []string `json:"files"`  // relative paths of all files under Path
+	SizeBytes     int64    `json:"sizeBytes"`
+	LoadedAliases []string `json:"loadedAliases"` // model aliases loaded from this repo
+	InConfig      bool     `json:"inConfig"`      // any file in this repo is referenced in config files
+	IsLocal       bool     `json:"isLocal"`       // true = not an HF repo
+	SourceUnknown bool     `json:"sourceUnknown"` // couldn't determine HF source
 }
 
 // iniModelDir returns the directory that contains (or IS) the model for an INI
@@ -103,240 +82,180 @@ func iniModelDir(section map[string]string) string {
 	return p
 }
 
-// scanModelDir returns all non-mmproj .gguf filenames and their total size in
-// dir. Returns a non-nil empty slice (not nil) so JSON encodes as [] not null.
-func scanModelDir(dir string) (files []string, totalSize int64) {
-	files = []string{}
+// isOrgDir reports whether dir contains only subdirectories and no regular
+// files, which is the signature of an HF org-level namespace directory.
+func isOrgDir(dir string) bool {
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Printf("scanModelDir %q: %v", dir, err)
-		}
-		return
+	if err != nil || len(entries) == 0 {
+		return false
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".gguf") || matchesMmproj(e.Name()) {
-			continue
+		if !e.IsDir() {
+			return false
 		}
-		if info, err := e.Info(); err == nil {
-			totalSize += info.Size()
-		}
-		files = append(files, e.Name())
 	}
-	return
+	return true
+}
+
+// scanFilesRelative returns all regular files under dir as forward-slash
+// relative paths, together with the total size in bytes.
+func scanFilesRelative(dir string) ([]string, int64) {
+	var files []string
+	var total int64
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, path)
+		files = append(files, filepath.ToSlash(rel))
+		total += info.Size()
+		return nil
+	})
+	if files == nil {
+		files = []string{}
+	}
+	return files, total
 }
 
 func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 	loadedModels, _ := s.fetchLoadedModels()
-	presetFile, _ := s.preset.Load()
 
-	models := make([]localModel, 0)
-	coveredDirs := make(map[string]struct{})
-
-	// Primary: one card per INI section (sorted for stable output).
-	if presetFile != nil {
-		names := make([]string, 0, len(presetFile.Sections))
-		for n := range presetFile.Sections {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-
-		for _, name := range names {
-			section := presetFile.Sections[name]
-			modelDir := iniModelDir(section)
-			if modelDir != "" {
-				coveredDirs[filepath.Clean(modelDir)] = struct{}{}
+	// Collect (name, modelPath) pairs from config files for InConfig / LoadedAliases.
+	type configEntry struct {
+		name      string
+		modelPath string
+	}
+	var configEntries []configEntry
+	if pf, err := s.preset.Load(); err == nil {
+		for name, sec := range pf.Sections {
+			if p := sec["model"]; p != "" {
+				configEntries = append(configEntries, configEntry{name, p})
 			}
-
-			files := []string{}
-			var totalSize int64
-			if modelDir != "" {
-				files, totalSize = scanModelDir(modelDir)
-			} else {
-				log.Printf("handleLocal: INI section %q has no model path", name)
-			}
-
-			mmprojPath := section["mmproj"]
-			mmprojName := ""
-			if mmprojPath != "" {
-				mmprojName = filepath.Base(mmprojPath)
-			}
-
-			// Walk up from modelDir toward ModelsDir to find .w84ggufman.json.
-			// This handles flat, one-level-nested, and doubly-nested layouts.
-			repoID := ""
-			if modelDir != "" {
-				for dir := filepath.Clean(modelDir); dir != s.cfg.ModelsDir && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-					if meta := readModelMeta(dir); meta.RepoID != "" {
-						repoID = meta.RepoID
-						break
-					}
-				}
-				if repoID == "" && len(files) > 0 {
-					repoID = detectRepoIDFromGGUF(modelDir, files)
-					if repoID != "" {
-						// Write to the model parent dir (direct child of ModelsDir),
-						// not the quant subdir, so it survives individual quant deletion.
-						writeDir := modelMetaParentDir(modelDir, s.cfg.ModelsDir)
-						if writeDir == "" {
-							writeDir = modelDir
-						}
-						_ = writeModelMeta(writeDir, repoID)
-					}
-				}
-			}
-
-			_, loaded := loadedModels[name]
-			models = append(models, localModel{
-				Name:        name,
-				Path:        modelDir,
-				SizeBytes:   totalSize,
-				Files:       files,
-				Loaded:      loaded,
-				IsVision:    mmprojPath != "",
-				Mmproj:      mmprojName,
-				InPreset:    true,
-				PresetEntry: section,
-				RepoID:      repoID,
-			})
 		}
 	}
-
-	// Secondary: llamaswap config.yaml entries not already covered by INI.
-	// This ensures models that are registered in config.yaml but absent from
-	// models.ini get their proper name instead of the subdirectory name.
 	if s.llamaSwap != nil {
 		if lsModels, err := s.llamaSwap.ListModels(); err == nil {
-			for _, lsm := range lsModels {
-				if lsm.ModelPath == "" {
-					continue
+			for _, m := range lsModels {
+				if m.ModelPath != "" {
+					configEntries = append(configEntries, configEntry{m.Name, m.ModelPath})
 				}
-				modelDir := filepath.Dir(lsm.ModelPath)
-				if _, covered := coveredDirs[filepath.Clean(modelDir)]; covered {
-					continue
-				}
-				coveredDirs[filepath.Clean(modelDir)] = struct{}{}
-
-				files, totalSize := scanModelDir(modelDir)
-				_, loaded := loadedModels[lsm.Name]
-
-				repoID := ""
-				for dir := filepath.Clean(modelDir); dir != s.cfg.ModelsDir && dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-					if meta := readModelMeta(dir); meta.RepoID != "" {
-						repoID = meta.RepoID
-						break
-					}
-				}
-				if repoID == "" && len(files) > 0 {
-					repoID = detectRepoIDFromGGUF(modelDir, files)
-					if repoID != "" {
-						writeDir := modelMetaParentDir(modelDir, s.cfg.ModelsDir)
-						if writeDir == "" {
-							writeDir = modelDir
-						}
-						_ = writeModelMeta(writeDir, repoID)
-					}
-				}
-
-				mmprojName := ""
-				if lsm.MmprojPath != "" {
-					mmprojName = filepath.Base(lsm.MmprojPath)
-				}
-
-				models = append(models, localModel{
-					Name:      lsm.Name,
-					Path:      modelDir,
-					SizeBytes: totalSize,
-					Files:     files,
-					Loaded:    loaded,
-					IsVision:  !lsm.IsSD && lsm.MmprojPath != "",
-					Mmproj:    mmprojName,
-					InPreset:  true,
-					RepoID:    repoID,
-				})
 			}
 		}
 	}
 
-	// Fallback: scan directories for models not covered by any INI section.
-	// Handles manually placed models and the old flat layout.
-	if dirEntries, err := os.ReadDir(s.cfg.ModelsDir); err == nil {
-		for _, entry := range dirEntries {
-			if !entry.IsDir() {
+	// inConfigFor returns true if any config-registered path is inside repoDir.
+	inConfigFor := func(repoDir string) bool {
+		rd := filepath.Clean(repoDir)
+		sep := string(filepath.Separator)
+		for _, e := range configEntries {
+			p := filepath.Clean(e.modelPath)
+			if p == rd || strings.HasPrefix(p, rd+sep) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// loadedAliasesFor returns names of currently-loaded models whose paths
+	// are inside repoDir.
+	loadedAliasesFor := func(repoDir string) []string {
+		rd := filepath.Clean(repoDir)
+		sep := string(filepath.Separator)
+		var aliases []string
+		seen := make(map[string]struct{})
+		for _, e := range configEntries {
+			if _, ok := loadedModels[e.name]; !ok {
 				continue
 			}
-			parentDir := filepath.Join(s.cfg.ModelsDir, entry.Name())
-
-			// New nested layout: check quant subdirs.
-			subEntries, _ := os.ReadDir(parentDir)
-			mmprojFile := ""
-			for _, sub := range subEntries {
-				if !sub.IsDir() && strings.HasSuffix(sub.Name(), ".gguf") && matchesMmproj(sub.Name()) {
-					mmprojFile = sub.Name()
-					break
-				}
+			if _, ok := seen[e.name]; ok {
+				continue
 			}
-			for _, sub := range subEntries {
-				if !sub.IsDir() {
+			p := filepath.Clean(e.modelPath)
+			if p == rd || strings.HasPrefix(p, rd+sep) {
+				aliases = append(aliases, e.name)
+				seen[e.name] = struct{}{}
+			}
+		}
+		if aliases == nil {
+			return []string{}
+		}
+		return aliases
+	}
+
+	models := make([]localModel, 0)
+	entries, _ := os.ReadDir(s.cfg.ModelsDir)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dirPath := filepath.Join(s.cfg.ModelsDir, entry.Name())
+
+		if isOrgDir(dirPath) {
+			// org/repo layout: each subdir of the org dir is a repo.
+			repoEntries, _ := os.ReadDir(dirPath)
+			for _, repoEntry := range repoEntries {
+				if !repoEntry.IsDir() {
 					continue
 				}
-				quantDir := filepath.Join(parentDir, sub.Name())
-				if _, covered := coveredDirs[filepath.Clean(quantDir)]; covered {
-					continue
+				repoDir := filepath.Join(dirPath, repoEntry.Name())
+				meta := readModelMeta(repoDir)
+				repoID := meta.RepoID
+				if repoID == "" {
+					repoID = entry.Name() + "/" + repoEntry.Name()
 				}
-				files, totalSize := scanModelDir(quantDir)
+				files, size := scanFilesRelative(repoDir)
 				if len(files) == 0 {
 					continue
 				}
-				name := sub.Name()
-				_, loaded := loadedModels[name]
-				repoID := readModelMeta(parentDir).RepoID
-				if repoID == "" {
-					repoID = detectRepoIDFromGGUF(quantDir, files)
-					if repoID != "" {
-						_ = writeModelMeta(parentDir, repoID)
-					}
-				}
 				models = append(models, localModel{
-					Name:      name,
-					Path:      quantDir,
-					SizeBytes: totalSize,
-					Files:     files,
-					Loaded:    loaded,
-					IsVision:  mmprojFile != "",
-					Mmproj:    mmprojFile,
-					InPreset:  false,
-					RepoID:    repoID,
+					RepoID:        repoID,
+					Path:          repoDir,
+					Files:         files,
+					SizeBytes:     size,
+					LoadedAliases: loadedAliasesFor(repoDir),
+					InConfig:      inConfigFor(repoDir),
+					IsLocal:       meta.SkipHFSync,
+					SourceUnknown: false,
 				})
 			}
+		} else {
+			// Old or local layout: one card per immediate child of modelsDir.
+			meta := readModelMeta(dirPath)
+			repoID := meta.RepoID
+			sourceUnknown := false
 
-			// Old flat layout: model files directly in parentDir.
-			if _, covered := coveredDirs[filepath.Clean(parentDir)]; covered {
-				continue
-			}
-			files, totalSize := scanModelDir(parentDir)
+			files, size := scanFilesRelative(dirPath)
 			if len(files) == 0 {
 				continue
 			}
-			name := entry.Name()
-			_, loaded := loadedModels[name]
-			repoID := readModelMeta(parentDir).RepoID
-			if repoID == "" {
-				repoID = detectRepoIDFromGGUF(parentDir, files)
-				if repoID != "" {
-					_ = writeModelMeta(parentDir, repoID)
+			if repoID == "" && !meta.SkipHFSync {
+				var ggufFiles []string
+				for _, f := range files {
+					b := filepath.Base(f)
+					if strings.HasSuffix(b, ".gguf") && !matchesMmproj(b) {
+						ggufFiles = append(ggufFiles, f)
+					}
+				}
+				if len(ggufFiles) > 0 {
+					repoID = detectRepoIDFromGGUF(dirPath, ggufFiles)
+					if repoID != "" {
+						_ = writeModelMeta(dirPath, repoID)
+					} else {
+						sourceUnknown = true
+					}
 				}
 			}
+
 			models = append(models, localModel{
-				Name:      name,
-				Path:      parentDir,
-				SizeBytes: totalSize,
-				Files:     files,
-				Loaded:    loaded,
-				IsVision:  mmprojFile != "",
-				Mmproj:    mmprojFile,
-				InPreset:  false,
-				RepoID:    repoID,
+				RepoID:        repoID,
+				Path:          dirPath,
+				Files:         files,
+				SizeBytes:     size,
+				LoadedAliases: loadedAliasesFor(dirPath),
+				InConfig:      inConfigFor(dirPath),
+				IsLocal:       meta.SkipHFSync,
+				SourceUnknown: sourceUnknown,
 			})
 		}
 	}
@@ -585,12 +504,14 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing id parameter", http.StatusBadRequest)
 		return
 	}
-	info, err := fetchRepoInfo(repoID, s.cfg.HFToken)
+	repoInfo, err := fetchRepoInfo(repoID, s.cfg.HFToken)
 	if err != nil {
 		http.Error(w, "failed to fetch repo: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, info)
+	repoDir := filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(repoID))
+	repoInfo.PresentFiles, _ = scanFilesRelative(repoDir)
+	writeJSON(w, repoInfo)
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -610,30 +531,6 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !req.Force {
-		// Check each quant's destination directory individually.
-		// New nested layout: ModelsDir/basename(repoID)/quantSubdirName(filename)
-		parentDir := filepath.Join(s.cfg.ModelsDir, filepath.Base(req.RepoID))
-		for _, filename := range req.Filenames {
-			quantDir := quantSubdirName(filename)
-			if quantDir == "" {
-				continue
-			}
-			destDir := filepath.Join(parentDir, quantDir)
-			if _, err := os.Stat(destDir); err == nil {
-				existingRepoID := readModelMeta(parentDir).RepoID
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]string{
-					"conflict":       "exists",
-					"modelName":      modelNameFromFilename(filename),
-					"existingRepoId": existingRepoID,
-				})
-				return
-			}
-		}
-	}
-
 	if err := s.dl.start(req.RepoID, req.Filenames, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
 		log.Printf("error: start download %s %v: %v", req.RepoID, req.Filenames, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -643,6 +540,98 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("download queued: %s %v", req.RepoID, req.Filenames)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing id parameter", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(id, "..") {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	var repoDir string
+	if filepath.IsAbs(id) {
+		clean := filepath.Clean(id)
+		if !strings.HasPrefix(clean, filepath.Clean(s.cfg.ModelsDir)+string(filepath.Separator)) {
+			http.Error(w, "path not under models dir", http.StatusBadRequest)
+			return
+		}
+		repoDir = clean
+	} else {
+		repoDir = filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(id))
+	}
+
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		http.Error(w, "repo not found", http.StatusNotFound)
+		return
+	}
+	if err := removeAllWritable(repoDir); err != nil {
+		log.Printf("error: delete repo %q: %v", id, err)
+		http.Error(w, "failed to delete: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("deleted repo dir %q", repoDir)
+
+	parentDir := filepath.Dir(repoDir)
+	if parentDir != filepath.Clean(s.cfg.ModelsDir) {
+		if entries, _ := os.ReadDir(parentDir); len(entries) == 0 {
+			if err := os.Remove(parentDir); err != nil {
+				log.Printf("warning: could not remove empty org dir %q: %v", parentDir, err)
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleDeleteFiles(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RepoID string   `json:"repoId"`
+		Files  []string `json:"files"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.RepoID == "" || len(req.Files) == 0 {
+		http.Error(w, "repoId and files are required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(req.RepoID, "..") {
+		http.Error(w, "invalid repoId", http.StatusBadRequest)
+		return
+	}
+
+	repoDir := filepath.Clean(filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(req.RepoID)))
+	sep := string(filepath.Separator)
+
+	var errMsgs []string
+	for _, f := range req.Files {
+		if strings.Contains(f, "..") {
+			errMsgs = append(errMsgs, "invalid path: "+f)
+			continue
+		}
+		fullPath := filepath.Clean(filepath.Join(repoDir, filepath.FromSlash(f)))
+		if fullPath != repoDir && !strings.HasPrefix(fullPath, repoDir+sep) {
+			errMsgs = append(errMsgs, "path traversal: "+f)
+			continue
+		}
+		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("warning: delete file %q: %v", fullPath, err)
+			errMsgs = append(errMsgs, f+": "+err.Error())
+		} else {
+			log.Printf("deleted file %q", fullPath)
+		}
+	}
+
+	if len(errMsgs) > 0 {
+		http.Error(w, strings.Join(errMsgs, "; "), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
@@ -826,51 +815,51 @@ func (s *server) handlePutLlamaSwapTemplates(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// -- llama-swap group membership handlers --
+// // -- llama-swap group membership handlers --
 
-func (s *server) handleGetLlamaSwapGroups(w http.ResponseWriter, r *http.Request) {
-	if s.llamaSwap == nil {
-		http.Error(w, "llama-swap not configured", http.StatusNotFound)
-		return
-	}
-	name := r.PathValue("name")
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
-		http.Error(w, "invalid model name", http.StatusBadRequest)
-		return
-	}
-	groups, err := s.llamaSwap.ListGroups(name)
-	if err != nil {
-		http.Error(w, "failed to read config.yaml: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if groups == nil {
-		writeJSON(w, []struct{}{})
-		return
-	}
-	writeJSON(w, groups)
-}
+// func (s *server) handleGetLlamaSwapGroups(w http.ResponseWriter, r *http.Request) {
+// 	if s.llamaSwap == nil {
+// 		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+// 		return
+// 	}
+// 	name := r.PathValue("name")
+// 	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+// 		http.Error(w, "invalid model name", http.StatusBadRequest)
+// 		return
+// 	}
+// 	groups, err := s.llamaSwap.ListGroups(name)
+// 	if err != nil {
+// 		http.Error(w, "failed to read config.yaml: "+err.Error(), http.StatusInternalServerError)
+// 		return
+// 	}
+// 	if groups == nil {
+// 		writeJSON(w, []struct{}{})
+// 		return
+// 	}
+// 	writeJSON(w, groups)
+// }
 
-func (s *server) handlePutLlamaSwapGroups(w http.ResponseWriter, r *http.Request) {
-	if s.llamaSwap == nil {
-		http.Error(w, "llama-swap not configured", http.StatusNotFound)
-		return
-	}
-	name := r.PathValue("name")
-	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
-		http.Error(w, "invalid model name", http.StatusBadRequest)
-		return
-	}
-	var groupNames []string
-	if err := json.NewDecoder(r.Body).Decode(&groupNames); err != nil {
-		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.llamaSwap.SetGroupMembership(name, groupNames); err != nil {
-		http.Error(w, "failed to write config.yaml: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+// func (s *server) handlePutLlamaSwapGroups(w http.ResponseWriter, r *http.Request) {
+// 	if s.llamaSwap == nil {
+// 		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+// 		return
+// 	}
+// 	name := r.PathValue("name")
+// 	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+// 		http.Error(w, "invalid model name", http.StatusBadRequest)
+// 		return
+// 	}
+// 	var groupNames []string
+// 	if err := json.NewDecoder(r.Body).Decode(&groupNames); err != nil {
+// 		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+// 		return
+// 	}
+// 	if err := s.llamaSwap.SetGroupMembership(name, groupNames); err != nil {
+// 		http.Error(w, "failed to write config.yaml: "+err.Error(), http.StatusInternalServerError)
+// 		return
+// 	}
+// 	w.WriteHeader(http.StatusNoContent)
+// }
 
 // -- Full config file handlers (llama-swap config.yaml or models.ini) --
 

@@ -230,6 +230,51 @@ input[type="text"]:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,
   border-left: 1px solid #334155; background: rgba(0,0,0,0.15);
 }
 .quant-tile.selected .quant-tile-size { border-color: rgba(59,130,246,0.4); color: #64748b; }
+/* ── Quant checkbox hidden inside label tile ──────────────────────────── */
+.quant-cb { display: none; }
+/* ── Quant tile checked/present states via :has() ─────────────────────── */
+.quant-tile:has(.quant-cb:checked):not(.toobig) {
+  border-color: #3b82f6; background: rgba(59,130,246,0.15); color: #93c5fd;
+}
+.quant-tile:has(.quant-cb:checked):not(.toobig) .quant-tile-size {
+  border-color: rgba(59,130,246,0.4); color: #64748b;
+}
+.quant-tile.present { border-color: #166534; background: rgba(22,101,52,0.1); color: #86efac; }
+.quant-tile.present .quant-tile-size { color: #4ade80; border-color: rgba(22,101,52,0.4); }
+.quant-tile.present:has(.quant-cb:not(:checked)) {
+  border-color: #7f1d1d; background: rgba(127,29,29,0.12); color: #fca5a5;
+}
+.quant-tile.present:has(.quant-cb:not(:checked)) .quant-tile-size { color: #f87171; border-color: rgba(127,29,29,0.4); }
+html.light .quant-tile.present { border-color: #166534; background: rgba(22,101,52,0.08); color: #14532d; }
+html.light .quant-tile.present .quant-tile-size { color: #16a34a; border-color: rgba(22,101,52,0.3); }
+html.light .quant-tile.present:has(.quant-cb:not(:checked)) { border-color: #991b1b; background: rgba(153,27,27,0.07); color: #991b1b; }
+html.light .quant-tile.present:has(.quant-cb:not(:checked)) .quant-tile-size { color: #dc2626; }
+/* ── Subsection headers (Quant files / Additional files) ──────────────── */
+.subsection-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 0 4px;
+}
+.subsection-label {
+  font-size: 0.72rem; font-weight: 600; color: #475569;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.select-btns { display: flex; gap: 6px; }
+.btn-link {
+  background: transparent; border: none; border-radius: 3px;
+  font-size: 0.72rem; color: #60a5fa; cursor: pointer; padding: 1px 4px;
+  transition: color 0.12s;
+}
+.btn-link:hover { color: #93c5fd; }
+html.light .subsection-label { color: #94a3b8; }
+html.light .btn-link { color: #2563eb; }
+html.light .btn-link:hover { color: #1d4ed8; }
+/* ── Additional badges (inConfig, local) ──────────────────────────────── */
+.badge-inconfig { background: #164e63; color: #67e8f9; }
+.badge-local    { background: #312e81; color: #a5b4fc; }
+html.light .badge-inconfig { background: #cffafe; color: #0e7490; }
+html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
+/* ── Model loaded row ─────────────────────────────────────────────────── */
+.model-loaded-row { display: flex; flex-wrap: wrap; gap: 4px; }
 /* ── Companion files ─────────────────────────────────────────────────── */
 .companion-section { margin: 8px 0 4px; }
 .companion-section > .sidecars-label { display: block; margin-bottom: 4px; }

@@ -11,3 +11,4 @@
 {"rule":"POSSESSIVE_APOSTROPHE","sentence":"^\\QThe models directory exists and is group-writable by \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Dummy\\+|Dummy's\\+)[0-9]+\\Q.\\E$"}
 {"rule":"NUMBERS_IN_WORDS","sentence":"^\\QThe flake uses gomod2nix instead of a manual \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Dummy\\+|Dummy's\\+)[0-9]+\\Q.\\E$"}
 {"rule":"UPPERCASE_SENTENCE_START","sentence":"^\\Qconnecting…\\E$"}
+{"rule":"EN_A_VS_AN","sentence":"^\\QModels are stored in an \\E(?:Dummy|Ina|Jimmy-|Dummy-|Maniquí-|Maniquíes-|Dummy\\+|Dummy's\\+)[0-9]+\\Q layout mirroring HuggingFace:\\E$"}

@@ -6,11 +6,13 @@ A self-contained Go web application for managing GGUF model files used by a
 
 ## Features
 
-- **Browse and download** GGUF models from HuggingFace — paste a repo ID, pick a
-  quantization, and stream the download in real time
-- **View local models** with total size and loaded/unloaded status (cross-referenced
-  against `/v1/models` on your llama-server)
-- **Delete models** and automatically restart `llama-cpp.service` via D-Bus
+- **Browse and download** GGUF models from HuggingFace — paste a repo ID, select
+  quantizations via checkboxes, and stream the download in real time
+- **Incremental sync** — already-downloaded files are pre-checked; uncheck a file
+  to delete it, check a new one to download it, then hit **Download / Save**
+- **View local models** as repo-level cards with total size, file count, and
+  loaded/unloaded status (cross-referenced against `/v1/models` on your llama-server)
+- **Delete repos** from the Local Models panel with a single button
 - **Manually restart** the llama-server from the UI at any time
 - Single binary with an embedded frontend — no separate build step, no Node.js
 
@@ -20,11 +22,25 @@ A self-contained Go web application for managing GGUF model files used by a
 | --- | --- |
 | llama-server URL | `http://localhost:9292` |
 | Models directory | `/var/lib/llama-models/` |
-| `hf` binary | `python3Packages.huggingface-hub` on PATH |
 | Init system | systemd |
 
-Each model lives in its own subdirectory named after the model, e.g.
-`/var/lib/llama-models/Qwen3-Coder-Q8_0/`.
+Models are stored in an `org/repo/` layout mirroring HuggingFace:
+
+```text
+/var/lib/llama-models/
+  bartowski/
+    Qwen3-Coder-480B-A35B-GGUF/
+      Q4_K_M/
+        Qwen3-Coder-480B-A35B-Q4_K_M-00001-of-00009.gguf
+        ...
+  unsloth/
+    Mistral-Small-3.2-24B-Instruct-2506-GGUF/
+      Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf
+```
+
+On startup, any models in the old flat layout (a single directory directly under
+`modelsDir`) are automatically migrated to the new `org/repo/` structure using
+HuggingFace metadata embedded in the GGUF files.
 
 ## Running
 
@@ -85,6 +101,24 @@ pass it with `--config`:
   // llama-swap reloads the file automatically — no restart needed.
   // Leave empty (the default) to disable llama-swap config management.
   "llamaSwapConfig": "/ai/llama-swap/config.yaml"
+}
+```
+
+### Per-repo metadata: `.w84ggufman.json`
+
+Each repo directory can contain an optional `.w84ggufman.json` file that stores
+metadata used by w84ggufman. It is created automatically for downloaded models.
+
+```jsonc
+{
+  // HuggingFace repo ID this directory was downloaded from, e.g. "bartowski/Llama-3-GGUF"
+  "repo_id": "bartowski/Llama-3-GGUF",
+
+  // When true, this directory is treated as a purely local model:
+  //   - It will NOT be migrated to the org/repo/ layout on startup
+  //   - It appears with a "local" badge in the UI instead of a repo link
+  //   - Clicking the card does not open the HuggingFace browser
+  "skip_hf_sync": true
 }
 ```
 
@@ -304,16 +338,25 @@ gomod2nix generate
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/local` | List local models with size and loaded status |
-| `GET` | `/api/repo?id={owner/repo}` | List GGUF files in a HuggingFace repo |
-| `POST` | `/api/download` | Start a download `{"repoId":"…","filename":"…"}` |
-| `GET` | `/api/download/status` | SSE stream of download output |
-| `DELETE` | `/api/local/{name}` | Delete a model directory |
-| `GET` | `/api/status` | App state: llama reachability, download in progress |
+| `GET` | `/api/local` | List local repos with size, files, and loaded status |
+| `GET` | `/api/repo?id={owner/repo}` | List GGUF files in a HuggingFace repo (includes `presentFiles`) |
+| `GET` | `/api/readme?id={owner/repo}` | Fetch and render the HuggingFace model card as HTML |
+| `POST` | `/api/download` | Start a download `{"repoId":"…","filenames":[…],"sidecarFiles":[…]}` |
+| `POST` | `/api/download/cancel` | Cancel the active download |
+| `GET` | `/api/download/status` | SSE stream of download progress |
+| `DELETE` | `/api/local?id={owner/repo\|path}` | Delete an entire repo directory |
+| `POST` | `/api/local/delete-files` | Delete individual files `{"repoId":"…","files":[…]}` |
+| `GET` | `/api/status` | App state: llama reachability, download in progress, disk/VRAM |
 | `POST` | `/api/restart` | Restart the configured llama service via D-Bus |
 | `POST` | `/api/restart-self` | Restart the w84ggufman service itself via D-Bus |
+| `GET` | `/api/preset/config` | Get full `models.ini` text |
+| `PUT` | `/api/preset/config` | Replace full `models.ini` text |
 | `GET` | `/api/preset/raw/{name}` | Get the raw INI block for a model |
 | `PUT` | `/api/preset/raw/{name}` | Replace the raw INI block for a model |
+| `GET` | `/api/llamaswap/config` | Get full `config.yaml` text |
+| `PUT` | `/api/llamaswap/config` | Replace full `config.yaml` text |
+| `GET` | `/api/llamaswap/templates` | Get llama-swap command templates |
+| `PUT` | `/api/llamaswap/templates` | Update llama-swap command templates |
 
 ## Building
 

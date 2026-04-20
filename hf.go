@@ -17,11 +17,12 @@ type HFFile struct {
 }
 
 type HFRepoInfo struct {
-	IsVision    bool     `json:"isVision"`
-	Models      []HFFile `json:"models"`
-	Sidecars    []HFFile `json:"sidecars"`
-	PipelineTag string   `json:"pipelineTag,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
+	IsVision     bool     `json:"isVision"`
+	Models       []HFFile `json:"models"`
+	Sidecars     []HFFile `json:"sidecars"`
+	PipelineTag  string   `json:"pipelineTag,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	PresentFiles []string `json:"presentFiles"`
 }
 
 type hfModelResponse struct {
@@ -54,7 +55,7 @@ var quantDirRe = regexp.MustCompile(`(?i)^(?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+
 // quantSuffixRe captures the quant token from the end of a model filename stem
 // (after stripping .gguf and any shard suffix). Companion to hasQuantRe/quantDirRe.
 // E.g.: "Llama-3-8B-Q4_K_M" → "Q4_K_M", "model-IQ4_XS" → "IQ4_XS".
-var quantSuffixRe = regexp.MustCompile(`(?i)[-_]((?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*)$`)
+// var quantSuffixRe = regexp.MustCompile(`(?i)[-_]((?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*)$`)
 
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)

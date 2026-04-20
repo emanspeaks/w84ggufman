@@ -46,6 +46,7 @@ func main() {
 
 	pm := newPresetManager(cfg)
 	lsm := newLlamaSwapManager(cfg)
+	migrateOldLayout(cfg, pm, lsm)
 	dl := newDownloader(cfg, pm, lsm)
 	srv := newServer(cfg, dl, pm, lsm)
 
@@ -63,6 +64,8 @@ func main() {
 	mux.HandleFunc("POST /api/download/cancel", srv.handleCancelDownload)
 	mux.HandleFunc("GET /api/download/status", srv.handleDownloadStatus)
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
+	mux.HandleFunc("DELETE /api/local", srv.handleDeleteRepo)
+	mux.HandleFunc("POST /api/local/delete-files", srv.handleDeleteFiles)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
 	mux.HandleFunc("POST /api/restart", srv.handleRestart)
 	mux.HandleFunc("POST /api/restart-self", srv.handleRestartSelf)
@@ -77,8 +80,8 @@ func main() {
 	mux.HandleFunc("PUT /api/llamaswap/templates", srv.handlePutLlamaSwapTemplates)
 	mux.HandleFunc("GET /api/llamaswap/raw/{name}", srv.handleGetLlamaSwapRaw)
 	mux.HandleFunc("PUT /api/llamaswap/raw/{name}", srv.handlePutLlamaSwapRaw)
-	mux.HandleFunc("GET /api/llamaswap/groups/{name}", srv.handleGetLlamaSwapGroups)
-	mux.HandleFunc("PUT /api/llamaswap/groups/{name}", srv.handlePutLlamaSwapGroups)
+	// mux.HandleFunc("GET /api/llamaswap/groups/{name}", srv.handleGetLlamaSwapGroups)
+	// mux.HandleFunc("PUT /api/llamaswap/groups/{name}", srv.handlePutLlamaSwapGroups)
 	mux.HandleFunc("GET /api/llamaswap/config", srv.handleGetLlamaSwapConfig)
 	mux.HandleFunc("PUT /api/llamaswap/config", srv.handlePutLlamaSwapConfig)
 

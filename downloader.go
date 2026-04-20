@@ -44,7 +44,8 @@ func scanCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 }
 
 type modelMeta struct {
-	RepoID string `json:"repoId"`
+	RepoID     string `json:"repoId"`
+	SkipHFSync bool   `json:"skip_hf_sync,omitempty"`
 }
 
 func writeModelMeta(dir, repoID string) error {
@@ -69,27 +70,23 @@ type progressInfo struct {
 	DLBytes int64 `json:"dlBytes"` // bytes downloaded so far
 }
 
-// downloadJob describes a single quant's download within a batch.
+// downloadJob describes a single file's download within a batch.
 type downloadJob struct {
-	filename  string // HF filename (may include subdir prefix)
-	pattern   string // shardPattern(filename): glob for sharded, literal for single
-	name      string // modelNameFromFilename(filename) = quant subdir name = INI section name
-	parentDir string // ModelsDir/filepath.Base(repoID): shared parent dir for all quants
-	destDir   string // parentDir/name: quant-specific subdir
-	oldDir    string // destDir.old if we renamed aside an existing dir, else ""
+	filename string // HF filename (may include subdir prefix like "Q4_K_M/model.gguf")
+	pattern  string // shardPattern(filename): glob for sharded, literal for single
 }
 
 type downloader struct {
-	cfg       Config
-	preset    *presetManager
-	llamaSwap *llamaSwapManager
-	mu        sync.Mutex
-	active    string
-	busy      bool
-	lines     []string
-	cancel    context.CancelFunc
+	cfg        Config
+	preset     *presetManager
+	llamaSwap  *llamaSwapManager
+	mu         sync.Mutex
+	active     string
+	busy       bool
+	lines      []string
+	cancel     context.CancelFunc
 	totalBytes int64
-	progress  *progressInfo
+	progress   *progressInfo
 }
 
 // removeAllWritable chmod-walks path to make every entry owner-writable before
@@ -143,21 +140,21 @@ func modelNameFromFilename(filename string) string {
 // For subdirectory-organized repos (e.g. "Q4_K_M/model.gguf") it returns the innermost
 // dir component ("Q4_K_M"). For flat repos it extracts the quant suffix via quantSuffixRe
 // (e.g. "Q4_K_M" from "Llama-3-8B-Q4_K_M.gguf"), falling back to the full stem.
-func quantSubdirName(filename string) string {
-	if idx := strings.LastIndex(filename, "/"); idx >= 0 {
-		dir := filename[:idx]
-		if jdx := strings.LastIndex(dir, "/"); jdx >= 0 {
-			dir = dir[jdx+1:]
-		}
-		return dir
-	}
-	base := shardRe.ReplaceAllString(filepath.Base(filename), "")
-	base = strings.TrimSuffix(base, ".gguf")
-	if m := quantSuffixRe.FindStringSubmatch(base); m != nil {
-		return m[1]
-	}
-	return base
-}
+// func quantSubdirName(filename string) string {
+// 	if idx := strings.LastIndex(filename, "/"); idx >= 0 {
+// 		dir := filename[:idx]
+// 		if jdx := strings.LastIndex(dir, "/"); jdx >= 0 {
+// 			dir = dir[jdx+1:]
+// 		}
+// 		return dir
+// 	}
+// 	base := shardRe.ReplaceAllString(filepath.Base(filename), "")
+// 	base = strings.TrimSuffix(base, ".gguf")
+// 	if m := quantSuffixRe.FindStringSubmatch(base); m != nil {
+// 		return m[1]
+// 	}
+// 	return base
+// }
 
 // shardPattern returns a glob pattern matching all shards of the given file.
 // For files in subdirectories (subdir-grouped quants) the directory prefix is
@@ -177,41 +174,6 @@ func shardPattern(filename string) string {
 	return dir + base
 }
 
-// findModelFile returns the absolute path of the primary model file within dir,
-// walking recursively to handle organized repos where hf preserves subdirectory
-// structure inside the download destination. For sharded patterns it prefers the
-// first shard (-00001-of-); for non-sharded patterns it prefers the exact basename.
-func findModelFile(dir, pattern string) string {
-	isSharded := strings.Contains(pattern, "*")
-	baseName := filepath.Base(pattern)
-	var result string
-	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasSuffix(name, ".gguf") || matchesMmproj(name) {
-			return nil
-		}
-		if result == "" {
-			result = path // first .gguf as fallback
-		}
-		if isSharded && strings.Contains(name, "-00001-of-") {
-			result = path
-			return fs.SkipAll
-		}
-		if !isSharded && name == baseName {
-			result = path
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if result != "" {
-		return result
-	}
-	return filepath.Join(dir, baseName)
-}
-
 func (d *downloader) activeInfo() (string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -227,10 +189,8 @@ func (d *downloader) cancelDownload() {
 	}
 }
 
-// start begins a download. Each filename in the batch gets its own destination
-// directory (named after the quant) and its own INI section, so quants can be
-// loaded and managed independently in llama-server. Downloads are run
-// sequentially; sidecars are placed in the first quant's directory.
+// start begins a download. All selected files and sidecars are placed under
+// modelsDir/org/repo/, preserving the HF subpath structure within that dir.
 func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, _ bool) error {
 	if len(filenames) == 0 {
 		return fmt.Errorf("at least one filename is required")
@@ -252,50 +212,20 @@ func (d *downloader) start(repoID string, filenames []string, sidecarFiles []str
 		return fmt.Errorf("download already in progress: %s", d.active)
 	}
 
-	// Parent dir is shared by all quants: ModelsDir/basename(repoID)
-	parentDirName := filepath.Base(repoID)
-	parentDir := filepath.Join(d.cfg.ModelsDir, parentDirName)
+	// All files go to modelsDir/org/repo/ (preserves HF subpath structure).
+	repoDir := filepath.Join(d.cfg.ModelsDir, filepath.FromSlash(repoID))
 
-	// Build one job per quant, renaming any existing quant subdir aside.
 	jobs := make([]downloadJob, 0, len(filenames))
 	for _, filename := range filenames {
-		name := modelNameFromFilename(filename) // unique INI section name
-		quantDir := quantSubdirName(filename)   // short on-disk subdir name
-		if name == "" || strings.ContainsAny(name, "/\\") {
-			for _, j := range jobs {
-				if j.oldDir != "" {
-					_ = os.Rename(j.oldDir, j.destDir)
-				}
-			}
-			return fmt.Errorf("could not derive valid model name from filename: %s", filename)
-		}
-		destDir := filepath.Join(parentDir, quantDir)
-		job := downloadJob{
-			filename:  filename,
-			pattern:   shardPattern(filename),
-			name:      name,
-			parentDir: parentDir,
-			destDir:   destDir,
-		}
-		if _, err := os.Stat(destDir); err == nil {
-			oldDir := destDir + ".old"
-			_ = removeAllWritable(oldDir)
-			if err := os.Rename(destDir, oldDir); err != nil {
-				for _, j := range jobs {
-					if j.oldDir != "" {
-						_ = os.Rename(j.oldDir, j.destDir)
-					}
-				}
-				return fmt.Errorf("could not move existing model %s: %w", name, err)
-			}
-			job.oldDir = oldDir
-		}
-		jobs = append(jobs, job)
+		jobs = append(jobs, downloadJob{
+			filename: filename,
+			pattern:  shardPattern(filename),
+		})
 	}
 
 	label := fmt.Sprintf("%s — %s", repoID, filenames[0])
 	if len(filenames) > 1 {
-		label = fmt.Sprintf("%s — %d quants", repoID, len(filenames))
+		label = fmt.Sprintf("%s — %d files", repoID, len(filenames))
 	}
 	switch len(sidecarFiles) {
 	case 1:
@@ -317,7 +247,7 @@ func (d *downloader) start(repoID string, filenames []string, sidecarFiles []str
 	d.cancel = cancelFn
 
 	log.Printf("download starting: repo=%s files=%v sidecars=%v", repoID, filenames, sidecarFiles)
-	go d.run(ctx, repoID, jobs, sidecarFiles)
+	go d.run(ctx, repoID, repoDir, jobs, sidecarFiles)
 	return nil
 }
 
@@ -383,10 +313,10 @@ func (d *downloader) runHFCommand(ctx context.Context, args []string) error {
 	return cmd.Wait()
 }
 
-func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob, sidecarFiles []string) {
+func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []downloadJob, sidecarFiles []string) {
 	d.appendLine(fmt.Sprintf("[w84ggufman] repo: %s", repoID))
 
-	// Progress polling: sum sizes across all quant destination directories.
+	// Progress polling: measure repoDir as a whole.
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
@@ -402,10 +332,7 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 				return
 			}
 			now := time.Now()
-			var cur int64
-			for _, j := range jobs {
-				cur += dirSize(j.destDir)
-			}
+			cur := dirSize(repoDir)
 			speed := int64(0)
 			if !lastMeasure.IsZero() {
 				dt := now.Sub(lastMeasure).Seconds()
@@ -437,17 +364,12 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 		}
 	}()
 
-	parentDir := jobs[0].parentDir
-
-	// Ensure the shared parent directory exists.
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		d.restoreAll(jobs)
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
 		d.finishWithError(fmt.Errorf("could not create model directory: %w", err))
 		return
 	}
 
-	// Download sidecar files (mmproj, etc.) to the shared parent directory so
-	// all quants can reference the same file in their INI entries.
+	// Sidecars (mmproj, VAE, etc.) go to the same repoDir.
 	if len(sidecarFiles) > 0 {
 		d.appendLine(fmt.Sprintf("[w84ggufman] companions: %s", strings.Join(sidecarFiles, ", ")))
 		d.appendLine("[w84ggufman] downloading companion files (initializing, please wait)...")
@@ -455,11 +377,10 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 		for _, sf := range sidecarFiles {
 			sidecarArgs = append(sidecarArgs, "--include", sf)
 		}
-		sidecarArgs = append(sidecarArgs, "--local-dir", parentDir)
+		sidecarArgs = append(sidecarArgs, "--local-dir", repoDir)
 		if err := d.runHFCommand(ctx, sidecarArgs); err != nil {
 			if ctx.Err() != nil {
 				d.appendLine("[w84ggufman] download cancelled")
-				d.restoreAll(jobs)
 				d.mu.Lock()
 				d.busy = false
 				d.cancel = nil
@@ -467,36 +388,15 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 				d.mu.Unlock()
 				return
 			}
-			d.restoreAll(jobs)
 			d.finishWithError(fmt.Errorf("companion download failed: %w", err))
 			return
 		}
 	}
 
-	// Determine mmproj path from sidecar filenames (parent dir, shared by all quants).
-	mmprojAbsPath := ""
-	for _, sf := range sidecarFiles {
-		if matchesMmproj(sf) {
-			mmprojAbsPath = filepath.Join(parentDir, filepath.Base(sf))
-			break
-		}
-	}
-
-	// Determine VAE path for Stable Diffusion models (ae.safetensors or *.vae.safetensors).
-	vaeAbsPath := ""
-	for _, sf := range sidecarFiles {
-		lower := strings.ToLower(filepath.Base(sf))
-		if lower == "ae.safetensors" || strings.HasSuffix(lower, ".vae.safetensors") {
-			vaeAbsPath = filepath.Join(parentDir, filepath.Base(sf))
-			break
-		}
-	}
-
 	for i, job := range jobs {
-		// Update the active label so the status bar shows which quant is running.
 		if len(jobs) > 1 {
 			d.mu.Lock()
-			d.active = fmt.Sprintf("%s — %s (%d/%d)", repoID, job.name, i+1, len(jobs))
+			d.active = fmt.Sprintf("%s — %s (%d/%d)", repoID, job.filename, i+1, len(jobs))
 			d.mu.Unlock()
 		}
 
@@ -507,13 +407,11 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 			d.appendLine("[w84ggufman] starting hf download (initializing, please wait)...")
 		}
 
-		args := []string{"download", repoID, "--include", job.pattern, "--local-dir", job.destDir}
-
+		args := []string{"download", repoID, "--include", job.pattern, "--local-dir", repoDir}
 		if err := d.runHFCommand(ctx, args); err != nil {
 			if ctx.Err() != nil {
-				log.Printf("download cancelled: %s", job.name)
+				log.Printf("download cancelled: %s", job.filename)
 				d.appendLine("[w84ggufman] download cancelled")
-				d.restoreRemaining(jobs, i)
 				d.mu.Lock()
 				d.busy = false
 				d.cancel = nil
@@ -521,81 +419,28 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 				d.mu.Unlock()
 				return
 			}
-			d.restoreRemaining(jobs, i)
 			d.finishWithError(fmt.Errorf("hf download failed: %w", err))
 			return
 		}
-
-		// This quant succeeded: clean up old dir, register in INI.
-		if job.oldDir != "" {
-			if err := removeAllWritable(job.oldDir); err != nil {
-				d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not remove old model: %v", err))
-			}
-		}
-
-		modelPath := findModelFile(job.destDir, job.pattern)
-		if err := d.preset.AddModel(job.name, modelPath, mmprojAbsPath); err != nil {
-			d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update models.ini: %v", err))
-		}
-		if d.llamaSwap != nil {
-			if err := d.llamaSwap.AddModel(job.name, modelPath, mmprojAbsPath, vaeAbsPath); err != nil {
-				d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update config.yaml: %v", err))
-			}
-		}
 	}
 
-	// Write metadata to shared parent directory after all quants succeed.
-	if err := writeModelMeta(parentDir, repoID); err != nil {
-		d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not write metadata: %v", err))
-	}
+	// Note: config file registration (models.ini / config.yaml) is no longer
+	// automatic — the user manages it via the config editors.
+	// if err := writeModelMeta(repoDir, repoID); err != nil { ... }
+	// if err := d.preset.AddModel(...); err != nil { ... }
+	// if d.llamaSwap != nil { d.llamaSwap.AddModel(...) }
 
-	log.Printf("download complete: %d quant(s) from %s", len(jobs), repoID)
-	if d.llamaSwap != nil && !d.cfg.ForceRestartOnLlamaSwap {
-		d.appendLine("[w84ggufman] download complete — llama-swap will hot-reload config.yaml")
-	} else {
-		d.appendLine("[w84ggufman] download complete, restarting service...")
-		if err := restartService(d.cfg.LlamaService); err != nil {
-			d.appendLine(fmt.Sprintf("[w84ggufman] warning: failed to restart service: %v", err))
-		} else {
-			d.appendLine("[w84ggufman] service restarted successfully")
-		}
-	}
+	// Note: automatic service restart is no longer performed after download.
+	// if err := restartService(d.cfg.LlamaService); err != nil { ... }
+
+	log.Printf("download complete: %d file(s) from %s", len(jobs), repoID)
+	d.appendLine("[w84ggufman] download complete")
 
 	d.mu.Lock()
 	d.busy = false
 	d.cancel = nil
 	d.progress = nil
 	d.mu.Unlock()
-}
-
-// restoreAll attempts to restore every job's old directory on total failure.
-func (d *downloader) restoreAll(jobs []downloadJob) {
-	for _, j := range jobs {
-		if j.oldDir != "" {
-			_ = removeAllWritable(j.destDir)
-			if err := os.Rename(j.oldDir, j.destDir); err != nil {
-				d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not restore old model %s: %v", j.name, err))
-			} else {
-				d.appendLine(fmt.Sprintf("[w84ggufman] restored previous model: %s", j.name))
-			}
-		}
-	}
-}
-
-// restoreRemaining restores old directories for jobs that have not yet
-// completed (starting from index i) on cancellation or failure. Jobs before i
-// already succeeded and had their old dirs cleaned up.
-func (d *downloader) restoreRemaining(jobs []downloadJob, i int) {
-	for _, j := range jobs[i:] {
-		if j.oldDir != "" {
-			_ = removeAllWritable(j.destDir)
-			if err := os.Rename(j.oldDir, j.destDir); err != nil {
-				d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not restore old model %s: %v", j.name, err))
-			} else {
-				d.appendLine(fmt.Sprintf("[w84ggufman] restored previous model: %s", j.name))
-			}
-		}
-	}
 }
 
 func (d *downloader) finishWithError(err error) {

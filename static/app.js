@@ -7,6 +7,7 @@ let warnVramBytes = 0;
 let diskFreeBytes = 0;
 let llamaSwapEnabled = false;
 let llamaServiceLabel = 'llama-server';
+let _refreshDlBtn = null; // set by renderRepoInfo so setDownloadState can re-evaluate
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -108,8 +109,6 @@ document.getElementById('status-bar-main').addEventListener('click', toggleStatu
   });
 })();
 
-// Keep body padding-bottom equal to the status bar height so content is
-// never obscured by the fixed bar, whether collapsed, expanded, or resized.
 (function() {
   const bar = document.getElementById('status-bar');
   new ResizeObserver(() => {
@@ -141,50 +140,64 @@ function renderLocalModels(models) {
   list.innerHTML = '';
   for (const m of models) {
     const card = document.createElement('div');
-    card.className = 'model-card' + (m.repoId ? ' clickable' : '');
-    card.dataset.modelName = m.name;
-    const visionBadge = m.isVision ? ' <span class="badge badge-vision">Vision</span>' : '';
-    const presetWarn = m.isVision && !m.inPreset
-      ? ' <span class="badge badge-warn-preset" title="Not in models.ini — add to preset so llama-server loads it">Preset missing</span>'
+    card.className = 'model-card' + (m.repoId && !m.isLocal ? ' clickable' : '');
+    card.dataset.aliases = (m.loadedAliases || []).join(',');
+
+    let repoLine;
+    if (m.sourceUnknown) {
+      repoLine = `<span class="model-repo-id model-repo-unknown">(source unknown)</span>`;
+    } else if (m.isLocal) {
+      repoLine = `<span class="model-repo-id">${esc(m.repoId || m.path)} <span class="badge badge-local">local</span></span>`;
+    } else if (m.repoId) {
+      repoLine = `<span class="model-repo-id">${esc(m.repoId)}</span>`;
+    } else {
+      repoLine = `<span class="model-repo-id model-repo-unknown">(unknown)</span>`;
+    }
+
+    const loadedAliases = m.loadedAliases || [];
+    const loadedHtml = loadedAliases.length > 0
+      ? loadedAliases.map(a => `<span class="badge badge-loaded">${esc(a)}</span>`).join(' ')
+      : `<span class="badge badge-unloaded">Unloaded</span>`;
+
+    const inConfigBadge = m.inConfig
+      ? ` <span class="badge badge-inconfig" title="Referenced in config file">In&nbsp;config</span>`
       : '';
-    const repoLine = m.repoId
-      ? `<span class="model-repo-id">${esc(m.repoId)}</span>`
-      : `<span class="model-repo-id model-repo-unknown">(source unknown)</span>`;
+
     card.innerHTML = `
       <div class="model-meta">
-        <span class="model-name">${esc(m.name)}${visionBadge}${presetWarn}</span>
         ${repoLine}
         <span class="model-detail">
-          ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}
-          &nbsp;<span class="badge loaded-badge ${m.loaded ? 'badge-loaded' : 'badge-unloaded'}" title="Loaded = currently active in llama-server">${m.loaded ? 'Loaded' : 'Unloaded'}</span>
+          ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}${inConfigBadge}
         </span>
+        <span class="model-loaded-row">${loadedHtml}</span>
       </div>
       <div class="model-actions">
-        <button class="btn-secondary config-btn">Config…</button>
         <button class="btn-danger delete-btn">Delete</button>
       </div>
     `;
-    if (m.repoId) {
+
+    if (m.repoId && !m.isLocal) {
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         document.getElementById('repo-input').value = m.repoId;
         browseRepo();
       });
     }
-    card.querySelector('.config-btn').addEventListener('click', () => openConfigModal(m.name));
-    card.querySelector('.delete-btn').addEventListener('click', () => deleteModel(m.name));
+
+    card.querySelector('.delete-btn').addEventListener('click', () => deleteRepo(m.repoId, m.path));
     list.appendChild(card);
   }
 }
 
-async function deleteModel(name) {
-  if (!confirm(`Delete model "${name}"?\n\nThis will remove all files and cannot be undone.`)) return;
+async function deleteRepo(repoId, path) {
+  const label = repoId || path;
+  if (!confirm(`Delete "${label}"?\n\nThis will remove all files and cannot be undone.`)) return;
   clearErr('local-error');
   try {
-    const resp = await fetch('/api/local/' + encodeURIComponent(name), { method: 'DELETE' });
-    if (resp.status === 404) { showErr('local-error', 'Model not found.'); return; }
+    const resp = await fetch('/api/local?id=' + encodeURIComponent(repoId || path), { method: 'DELETE' });
+    if (resp.status === 404) { showErr('local-error', 'Repo not found.'); return; }
     if (!resp.ok) throw new Error(await resp.text());
-    setStatusBar('Ready', llamaSwapEnabled ? 'Model deleted' : 'Model deleted, restarting service…', false);
+    setStatusBar('Ready', 'Deleted ' + label, false);
     fetchLocalModels();
   } catch (e) {
     showErr('local-error', 'Delete failed: ' + e.message);
@@ -221,27 +234,38 @@ function commonPrefix(arr) {
   }, arr[0]);
 }
 
-// Extract the display label for a quant tile (the part after the model prefix).
 function quantDisplayName(filename, prefix) {
   const base = filename.replace(/\.gguf$/i, '');
   const tail = base.startsWith(prefix) ? base.slice(prefix.length).replace(/^[-_]/, '') : base;
   return tail || base;
 }
 
-// Bit depth is the first digit run after a known quant family prefix.
-// Known families: IQ, TQ, BF, MXFP, NVFP, Q, F (longest-first for alternation).
-// Strips leading UD- variant prefix, then matches at start-of-string (when the
-// common prefix has been stripped) or after a separator (when the full filename
-// is used as the display name because there was no common prefix to strip).
 function quantBitDepth(displayName) {
   const m = displayName.replace(/^UD-/i, '').match(/(?:^|[-_.])(?:IQ|TQ|BF|MXFP|NVFP|[QF])(\d+)/i);
   return m ? parseInt(m[1]) : 999;
+}
+
+// isPresentFile checks if a HF filename is already on disk. For subdirectory
+// quants (filename has "/"), a match is found if any present path shares the dir.
+function isPresentFile(filename, presentFiles) {
+  if (!filename || !presentFiles) return false;
+  const slash = filename.indexOf('/');
+  if (slash >= 0) {
+    const dir = filename.slice(0, slash + 1);
+    for (const p of presentFiles) {
+      if (p.startsWith(dir)) return true;
+    }
+    return false;
+  }
+  return presentFiles.has(filename);
 }
 
 function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
   const sidecars = info.sidecars || [];
+  const presentFiles = new Set(info.presentFiles || []);
+
   if (!files.length && !sidecars.length) {
     results.innerHTML = '<p class="msg-empty">No GGUF files found in this repo.</p>';
     return;
@@ -272,12 +296,24 @@ function renderRepoInfo(repoId, info) {
     results.appendChild(hdr);
   }
 
-  if (files.length) {
-    // Compute display prefix: common prefix of all base filenames (without .gguf).
-    const bases = files.map(f => f.filename.replace(/\.gguf$/i, ''));
-    const prefix = commonPrefix(bases).replace(/[-_]+$/, '');
+  const quantCbs = [];
+  const sidecarCbs = [];
 
-    // Group files by bit-depth for the grid rows.
+  if (files.length) {
+    const quantHdr = document.createElement('div');
+    quantHdr.className = 'subsection-header';
+    quantHdr.innerHTML =
+      `<span class="subsection-label">Quant files</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    results.appendChild(quantHdr);
+    const [selAllQ, deselAllQ] = quantHdr.querySelectorAll('.btn-link');
+
+    const bases = files.map(f => f.displayName ? '' : f.filename.replace(/\.gguf$/i, ''));
+    const prefix = commonPrefix(bases.filter(Boolean)).replace(/[-_]+$/, '');
+
     const byBit = new Map();
     for (const f of files) {
       const label = f.displayName || quantDisplayName(f.filename, prefix);
@@ -286,9 +322,6 @@ function renderRepoInfo(repoId, info) {
       byBit.get(bits).push({ f, label });
     }
     const sortedBits = [...byBit.keys()].sort((a, b) => a - b);
-
-    // Track which filenames are selected.
-    const selected = new Set();
 
     const grid = document.createElement('div');
     grid.className = 'quant-grid';
@@ -307,25 +340,35 @@ function renderRepoInfo(repoId, info) {
       tilesWrap.className = 'quant-tiles';
 
       for (const { f, label } of group) {
-        const tooBig = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
+        const isPresent = isPresentFile(f.filename, presentFiles);
+        const tooBig   = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
         const vramWarn = warnVramBytes > 0 && f.size != null && f.size > warnVramBytes;
-        const tile = document.createElement('span');
-        tile.className = 'quant-tile' + (tooBig ? ' toobig' : '') + (vramWarn ? ' vramwarn' : '');
-        tile.title = f.filename;
-        tile.innerHTML =
-          `<span class="quant-tile-name">${esc(label)}</span>` +
-          `<span class="quant-tile-size">${vramWarn ? '⚠ ' : ''}${esc(formatBytes(f.size))}</span>`;
 
-        tile.addEventListener('click', () => {
-          if (selected.has(f.filename)) {
-            selected.delete(f.filename);
-            tile.classList.remove('selected');
-          } else {
-            selected.add(f.filename);
-            tile.classList.add('selected');
-          }
-          refreshDlBtn();
-        });
+        const tile = document.createElement('label');
+        tile.className = 'quant-tile' +
+          (tooBig   ? ' toobig'   : '') +
+          (vramWarn ? ' vramwarn' : '') +
+          (isPresent ? ' present' : '');
+        tile.title = f.filename;
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'quant-cb';
+        cb.dataset.filename = f.filename;
+        cb.dataset.size = f.size || 0;
+        cb.checked = isPresent;
+        cb.addEventListener('change', refreshDlBtn);
+        quantCbs.push(cb);
+
+        tile.appendChild(cb);
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'quant-tile-name';
+        nameSpan.textContent = label;
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'quant-tile-size';
+        sizeSpan.textContent = (vramWarn ? '⚠ ' : '') + formatBytes(f.size) + (isPresent ? ' ✓' : '');
+        tile.appendChild(nameSpan);
+        tile.appendChild(sizeSpan);
         tilesWrap.appendChild(tile);
       }
       row.appendChild(tilesWrap);
@@ -333,65 +376,150 @@ function renderRepoInfo(repoId, info) {
     }
     results.appendChild(grid);
 
-    // Companion files section (shared across all quants).
-    let companionEl = null;
-    if (sidecars.length > 0) {
-      companionEl = document.createElement('div');
-      companionEl.className = 'companion-section';
-      const items = sidecars.map((s, i) =>
-        `<div class="sidecar-row">
-          <input type="checkbox" class="sidecar-cb" data-idx="${i}" checked>
-          <span class="sidecar-name">${esc(s.filename)}</span>
-          ${s.size != null ? `<span class="sidecar-size">${esc(formatBytes(s.size))}</span>` : ''}
-        </div>`
-      ).join('');
-      companionEl.innerHTML = `<span class="sidecars-label">Additional files:</span><div class="sidecars-wrap">${items}</div>`;
-      results.appendChild(companionEl);
-    }
-
-    // Single download button row at the bottom.
-    const dlRow = document.createElement('div');
-    dlRow.className = 'dl-action-row';
-    const hint = document.createElement('span');
-    hint.className = 'dl-selection-hint';
-    hint.textContent = 'Select one or more quants above';
-    const dlBtn = document.createElement('button');
-    dlBtn.className = 'btn-primary';
-    dlBtn.disabled = true;
-    dlBtn.textContent = 'Download';
-
-    function refreshDlBtn() {
-      const n = selected.size;
-      dlBtn.disabled = downloadInProgress || n === 0;
-      hint.textContent = n === 0 ? 'Select one or more quants above'
-        : n === 1 ? '1 quant selected'
-        : n + ' quants selected';
-      dlBtn.textContent = n > 1 ? `Download (${n})` : 'Download';
-    }
-
-    dlBtn.addEventListener('click', () => {
-      const selFiles = files.filter(f => selected.has(f.filename));
-      const checkedSidecars = companionEl
-        ? [...companionEl.querySelectorAll('.sidecar-cb:checked')].map(cb => sidecars[+cb.dataset.idx].filename)
-        : [];
-      const sidecarSize = companionEl
-        ? [...companionEl.querySelectorAll('.sidecar-cb:checked')].reduce((s, cb) => s + (sidecars[+cb.dataset.idx].size || 0), 0)
-        : 0;
-      const totalSize = selFiles.reduce((s, f) => s + (f.size || 0), 0) + sidecarSize;
-      startDownload(repoId, selFiles.map(f => f.filename), checkedSidecars, totalSize);
-    });
-
-    dlRow.appendChild(hint);
-    dlRow.appendChild(dlBtn);
-    results.appendChild(dlRow);
+    selAllQ.addEventListener('click',   () => { quantCbs.forEach(cb => { cb.checked = true;  }); refreshDlBtn(); });
+    deselAllQ.addEventListener('click', () => { quantCbs.forEach(cb => { cb.checked = false; }); refreshDlBtn(); });
   }
+
+  if (sidecars.length > 0) {
+    const companionEl = document.createElement('div');
+    companionEl.className = 'companion-section';
+
+    const sHdr = document.createElement('div');
+    sHdr.className = 'subsection-header';
+    sHdr.innerHTML =
+      `<span class="subsection-label">Additional files</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    companionEl.appendChild(sHdr);
+    const [selAllS, deselAllS] = sHdr.querySelectorAll('.btn-link');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'sidecars-wrap';
+    sidecars.forEach((s, i) => {
+      const isPresent = isPresentFile(s.filename, presentFiles);
+      const row = document.createElement('div');
+      row.className = 'sidecar-row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'sidecar-cb';
+      cb.dataset.idx = i;
+      cb.checked = isPresent;
+      cb.addEventListener('change', refreshDlBtn);
+      sidecarCbs.push(cb);
+
+      row.appendChild(cb);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'sidecar-name';
+      nameSpan.textContent = s.filename;
+      row.appendChild(nameSpan);
+      if (s.size != null) {
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'sidecar-size';
+        sizeSpan.textContent = formatBytes(s.size) + (isPresent ? ' ✓' : '');
+        row.appendChild(sizeSpan);
+      }
+      wrap.appendChild(row);
+    });
+    companionEl.appendChild(wrap);
+
+    selAllS.addEventListener('click',   () => { sidecarCbs.forEach(cb => { cb.checked = true;  }); refreshDlBtn(); });
+    deselAllS.addEventListener('click', () => { sidecarCbs.forEach(cb => { cb.checked = false; }); refreshDlBtn(); });
+
+    results.appendChild(companionEl);
+  }
+
+  // Download / Save action row
+  const dlRow = document.createElement('div');
+  dlRow.className = 'dl-action-row';
+  const hint = document.createElement('span');
+  hint.className = 'dl-selection-hint';
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'btn-primary';
+  dlBtn.textContent = 'Download / Save';
+  dlBtn.disabled = true;
+
+  function getActions() {
+    const toDl = quantCbs
+      .filter(cb => cb.checked && !isPresentFile(cb.dataset.filename, presentFiles))
+      .map(cb => ({ filename: cb.dataset.filename, size: +cb.dataset.size }));
+    const toDlSidecars = sidecarCbs
+      .filter(cb => cb.checked && !isPresentFile(sidecars[+cb.dataset.idx].filename, presentFiles))
+      .map(cb => sidecars[+cb.dataset.idx]);
+    const toDel = [
+      ...quantCbs
+        .filter(cb => !cb.checked && isPresentFile(cb.dataset.filename, presentFiles))
+        .map(cb => cb.dataset.filename),
+      ...sidecarCbs
+        .filter(cb => !cb.checked && isPresentFile(sidecars[+cb.dataset.idx].filename, presentFiles))
+        .map(cb => sidecars[+cb.dataset.idx].filename),
+    ];
+    return { toDl, toDlSidecars, toDel };
+  }
+
+  function refreshDlBtn() {
+    const { toDl, toDlSidecars, toDel } = getActions();
+    const hasChanges = toDl.length > 0 || toDlSidecars.length > 0 || toDel.length > 0;
+    dlBtn.disabled = downloadInProgress || !hasChanges;
+    const parts = [];
+    if (toDl.length + toDlSidecars.length > 0)
+      parts.push((toDl.length + toDlSidecars.length) + ' to download');
+    if (toDel.length > 0)
+      parts.push(toDel.length + ' to delete');
+    hint.textContent = parts.length ? parts.join(', ') : 'No changes';
+  }
+
+  _refreshDlBtn = refreshDlBtn;
+
+  dlBtn.addEventListener('click', async () => {
+    const { toDl, toDlSidecars, toDel } = getActions();
+
+    if (toDel.length > 0) {
+      try {
+        const resp = await fetch('/api/local/delete-files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoId, files: toDel }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        toDel.forEach(f => presentFiles.delete(f));
+        setStatusBar('Ready', `Deleted ${toDel.length} file(s)`, false);
+        fetchLocalModels();
+      } catch (e) {
+        setStatusBar('Error', 'Delete failed: ' + e.message, false);
+        return;
+      }
+    }
+
+    if (toDl.length > 0 || toDlSidecars.length > 0) {
+      const filenames = toDl.length > 0
+        ? toDl.map(f => f.filename)
+        : [toDlSidecars[0].filename];
+      const sFiles = toDl.length > 0
+        ? toDlSidecars.map(s => s.filename)
+        : toDlSidecars.slice(1).map(s => s.filename);
+      const totalSize = toDl.reduce((s, f) => s + f.size, 0)
+        + toDlSidecars.reduce((s, f) => s + (f.size || 0), 0);
+      startDownload(repoId, filenames, sFiles, totalSize);
+    } else {
+      refreshDlBtn();
+    }
+  });
+
+  dlRow.appendChild(hint);
+  dlRow.appendChild(dlBtn);
+  results.appendChild(dlRow);
+
+  refreshDlBtn();
 }
 
 // ── Download ───────────────────────────────────────────────────────────────
 
-async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) {
+async function startDownload(repoId, filenames, sidecarFiles, totalSize) {
   if (downloadInProgress) return;
-  if (!Array.isArray(filenames)) filenames = [filenames]; // compat
+  if (!Array.isArray(filenames)) filenames = [filenames];
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GiB. Continue?`)) return;
@@ -402,7 +530,6 @@ async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) 
   }
   const body = { repoId, filenames, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;
-  if (force) body.force = true;
   let resp;
   try {
     resp = await fetch('/api/download', {
@@ -417,11 +544,6 @@ async function startDownload(repoId, filenames, sidecarFiles, totalSize, force) 
   if (resp.status === 409) {
     let conflict;
     try { conflict = await resp.json(); } catch (_) { conflict = {}; }
-    if (conflict.conflict === 'exists') {
-      const repoLine = conflict.existingRepoId ? `\nOriginally from: ${conflict.existingRepoId}` : '';
-      if (!confirm(`Model "${conflict.modelName}" already exists.${repoLine}\n\nReplace it with a fresh download?`)) return;
-      return startDownload(repoId, filenames, sidecarFiles, totalSize, true);
-    }
     setStatusBar('Error', 'Download conflict: ' + (conflict.message || resp.statusText), false);
     return;
   }
@@ -483,15 +605,13 @@ function openSSE() {
     activeEventSource = null;
     document.getElementById('dl-progress-fill').style.width = '0%';
     setStatusBar('Error', 'Connection lost', false);
-    // Do not clear downloadInProgress — pollStatus will reconnect SSE if the
-    // download is still running on the server.
   };
 }
 
 function setDownloadState(inProgress) {
   downloadInProgress = inProgress;
-  document.querySelectorAll('.dl-btn').forEach(btn => { btn.disabled = inProgress; });
   document.getElementById('cancel-dl-btn').style.display = inProgress ? 'inline-block' : 'none';
+  if (_refreshDlBtn) _refreshDlBtn();
 }
 
 // ── Status pill menu ───────────────────────────────────────────────────────
@@ -535,8 +655,7 @@ async function restartSelf() {
   setStatusBar('Restart', 'Restarting w84ggufman…', true);
   try {
     await fetch('/api/restart-self', { method: 'POST' });
-  } catch (_) { /* process dying causes network error — that's expected */ }
-  // Wait for the server to go down then come back up.
+  } catch (_) {}
   await new Promise(r => setTimeout(r, 1200));
   for (let i = 0; i < 30; i++) {
     try {
@@ -551,8 +670,6 @@ async function restartSelf() {
 
 // ── Config modal ───────────────────────────────────────────────────────────
 
-// openRawEditModal is the shared implementation for both per-model and
-// full-file config editing modals.
 async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg }) {
   let body = '';
   try {
@@ -611,103 +728,6 @@ async function openRawEditModal({ title, subtitle, endpoint, placeholder, succes
 
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
   document.addEventListener('keydown', onKey);
-  document.body.appendChild(backdrop);
-  ta.focus();
-  ta.setSelectionRange(0, 0);
-}
-
-async function openConfigModal(name) {
-  if (!llamaSwapEnabled) {
-    await openRawEditModal({
-      title: 'Config', subtitle: name,
-      endpoint: '/api/preset/raw/' + encodeURIComponent(name),
-      placeholder: '; llama-server preset settings for this model\nmodel = /path/to/model.gguf\nctx-size = 65536',
-      successMsg: 'Config saved for ' + name,
-    });
-    return;
-  }
-
-  const encodedName = encodeURIComponent(name);
-  const [rawResult, groupsResult] = await Promise.allSettled([
-    fetch('/api/llamaswap/raw/' + encodedName).then(r => r.ok ? r.text() : ''),
-    fetch('/api/llamaswap/groups/' + encodedName).then(r => r.ok ? r.json() : []),
-  ]);
-  const body = rawResult.status === 'fulfilled' ? rawResult.value : '';
-  const groups = groupsResult.status === 'fulfilled' ? groupsResult.value : [];
-
-  const placeholder = 'cmd: >-\n  /ai/llama-swap/bin/llama-server --port ${PORT}\n  -m /path/to/model.gguf\n  --alias ModelName\n  --no-webui -ngl 999 --no-mmap --flash-attn --mlock -c 65536 --jinja\nttl: 0';
-
-  const groupsHtml = groups.length ? `
-    <div class="modal-groups">
-      <div class="modal-groups-label">Group membership</div>
-      <div class="modal-groups-list">${groups.map(g => {
-        const opts = 'swap: ' + g.swap + ', exclusive: ' + g.exclusive;
-        return '<label class="modal-group-row">'
-          + '<input type="checkbox" class="group-cb" data-group="' + esc(g.name) + '"' + (g.isMember ? ' checked' : '') + '>'
-          + '<span class="group-label-name">' + esc(g.name) + '</span>'
-          + '<span class="group-opts">(' + esc(opts) + ')</span>'
-          + '</label>';
-      }).join('')}</div>
-    </div>` : '';
-
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-title" id="modal-title">Config <small>${esc(name)}</small></div>
-      <textarea spellcheck="false" placeholder="${esc(placeholder)}">${esc(body)}</textarea>
-      ${groupsHtml}
-      <div class="modal-actions">
-        <button class="btn-secondary" id="modal-cancel">Cancel</button>
-        <button class="btn-primary" id="modal-save">Save</button>
-      </div>
-    </div>
-  `;
-
-  const ta = backdrop.querySelector('textarea');
-
-  function closeModal() {
-    document.body.removeChild(backdrop);
-    document.removeEventListener('keydown', onKey);
-  }
-  function onKey(e) { if (e.key === 'Escape') closeModal(); }
-
-  backdrop.querySelector('#modal-cancel').addEventListener('click', closeModal);
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
-  document.addEventListener('keydown', onKey);
-
-  backdrop.querySelector('#modal-save').addEventListener('click', async () => {
-    const saveBtn = backdrop.querySelector('#modal-save');
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      const rawResp = await fetch('/api/llamaswap/raw/' + encodedName, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain' },
-        body: ta.value,
-      });
-      if (!rawResp.ok) throw new Error(await rawResp.text());
-
-      if (groups.length) {
-        const checked = [...backdrop.querySelectorAll('.group-cb:checked')].map(cb => cb.dataset.group);
-        const grpResp = await fetch('/api/llamaswap/groups/' + encodedName, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(checked),
-        });
-        if (!grpResp.ok) throw new Error(await grpResp.text());
-      }
-
-      closeModal();
-      setStatusBar('Ready', 'Config saved for ' + name, false);
-      fetchLocalModels();
-    } catch (e) {
-      setStatusBar('Error', 'Save failed: ' + e.message, false);
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
-    }
-  });
-
   document.body.appendChild(backdrop);
   ta.focus();
   ta.setSelectionRange(0, 0);
@@ -866,7 +886,6 @@ async function pollStatus() {
       document.getElementById('disk-text').textContent = formatBytes(s.disk.freeBytes) + ' free';
       document.getElementById('disk-info').style.display = 'flex';
     }
-
     if (s.vramBytes > 0) {
       const el = document.getElementById('vram-total-text');
       el.textContent = 'VRAM: ' + formatBytes(s.vramBytes);
@@ -874,15 +893,17 @@ async function pollStatus() {
     }
     if (s.warnDownloadBytes) warnDownloadBytes = s.warnDownloadBytes;
     if (s.warnVramBytes) warnVramBytes = s.warnVramBytes;
-    // Update loaded badges on existing cards without re-rendering
+    // Update loaded aliases on model cards without re-rendering
     if (s.loadedModels) {
       const loadedSet = new Set(s.loadedModels);
-      document.querySelectorAll('[data-model-name]').forEach(card => {
-        const badge = card.querySelector('.loaded-badge');
-        if (!badge) return;
-        const isLoaded = loadedSet.has(card.dataset.modelName);
-        badge.className = 'badge loaded-badge ' + (isLoaded ? 'badge-loaded' : 'badge-unloaded');
-        badge.textContent = isLoaded ? 'Loaded' : 'Unloaded';
+      document.querySelectorAll('.model-card[data-aliases]').forEach(card => {
+        const aliases = card.dataset.aliases ? card.dataset.aliases.split(',').filter(Boolean) : [];
+        const loadedRow = card.querySelector('.model-loaded-row');
+        if (!loadedRow) return;
+        const active = aliases.filter(a => loadedSet.has(a));
+        loadedRow.innerHTML = active.length > 0
+          ? active.map(a => `<span class="badge badge-loaded">${esc(a)}</span>`).join(' ')
+          : '<span class="badge badge-unloaded">Unloaded</span>';
       });
     }
     if (s.downloadInProgress && !activeEventSource) {
@@ -891,7 +912,7 @@ async function pollStatus() {
     } else if (!s.downloadInProgress && downloadInProgress && !activeEventSource) {
       setDownloadState(false);
     }
-  } catch (_) { /* network error, ignore */ }
+  } catch (_) {}
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────

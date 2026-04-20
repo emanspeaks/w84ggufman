@@ -6,7 +6,11 @@
       "Bash(\"/c/Program Files/Go/bin/go\" build ./...)",
       "Bash(npx markdownlint-cli2 *)",
       "Bash(GOOS=linux GOARCH=amd64 \"/c/Program Files/Go/bin/go\" vet ./...)",
-      "Read(//c/scratch/git/nixos-cfg/moss/services/w84ggufman.nix)"
+      "Read(//c/scratch/git/nixos-cfg/moss/services/w84ggufman.nix)",
+      "Bash(go build *)",
+      "Read(//c/Program Files/Go/bin/**)",
+      "Read(//c/Users/emanspeaks/go/bin/**)",
+      "Bash(find /c -name \"go.exe\" -maxdepth 6)"
     ]
   }
 }

@@ -9,6 +9,7 @@ calc
 chowns
 Consolas
 cpp
+desel
 dir
 fdinfo
 fdinfos
@@ -24,6 +25,7 @@ gopls
 gotools
 HFURL
 HuggingFace
+inconfig
 Init
 iogpu
 JSONC
@@ -51,6 +53,7 @@ params
 pkgs
 polkit
 Polkit
+quantizations
 Qwen
 Rfilename
 rgba

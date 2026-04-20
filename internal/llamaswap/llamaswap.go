@@ -280,77 +280,77 @@ func extractCmdFlag(cmd, flag string) string {
 	return ""
 }
 
-// GroupInfo describes one group entry in the llama-swap config.
-type GroupInfo struct {
-	Name      string `json:"name"`
-	Swap      bool   `json:"swap"`
-	Exclusive bool   `json:"exclusive"`
-	IsMember  bool   `json:"isMember"`
-}
+// // GroupInfo describes one group entry in the llama-swap config.
+// type GroupInfo struct {
+// 	Name      string `json:"name"`
+// 	Swap      bool   `json:"swap"`
+// 	Exclusive bool   `json:"exclusive"`
+// 	IsMember  bool   `json:"isMember"`
+// }
 
-// ListGroups returns every group defined in the document, annotated with
-// whether modelName is currently a member.
-func ListGroups(doc *yaml.Node, modelName string) []GroupInfo {
-	root := rootMapping(doc)
-	groups := mappingGet(root, "groups")
-	if groups == nil {
-		return nil
-	}
-	var result []GroupInfo
-	for i := 0; i+1 < len(groups.Content); i += 2 {
-		name := groups.Content[i].Value
-		group := groups.Content[i+1]
-		if group.Kind != yaml.MappingNode {
-			continue
-		}
-		info := GroupInfo{Name: name}
-		if sv := mappingGet(group, "swap"); sv != nil {
-			info.Swap, _ = strconv.ParseBool(sv.Value)
-		}
-		if ev := mappingGet(group, "exclusive"); ev != nil {
-			info.Exclusive, _ = strconv.ParseBool(ev.Value)
-		}
-		if members := mappingGet(group, "members"); members != nil {
-			info.IsMember = seqContains(members, modelName)
-		}
-		result = append(result, info)
-	}
-	return result
-}
+// // ListGroups returns every group defined in the document, annotated with
+// // whether modelName is currently a member.
+// func ListGroups(doc *yaml.Node, modelName string) []GroupInfo {
+// 	root := rootMapping(doc)
+// 	groups := mappingGet(root, "groups")
+// 	if groups == nil {
+// 		return nil
+// 	}
+// 	var result []GroupInfo
+// 	for i := 0; i+1 < len(groups.Content); i += 2 {
+// 		name := groups.Content[i].Value
+// 		group := groups.Content[i+1]
+// 		if group.Kind != yaml.MappingNode {
+// 			continue
+// 		}
+// 		info := GroupInfo{Name: name}
+// 		if sv := mappingGet(group, "swap"); sv != nil {
+// 			info.Swap, _ = strconv.ParseBool(sv.Value)
+// 		}
+// 		if ev := mappingGet(group, "exclusive"); ev != nil {
+// 			info.Exclusive, _ = strconv.ParseBool(ev.Value)
+// 		}
+// 		if members := mappingGet(group, "members"); members != nil {
+// 			info.IsMember = seqContains(members, modelName)
+// 		}
+// 		result = append(result, info)
+// 	}
+// 	return result
+// }
 
-// SetGroupMembership adds modelName to each group in groupNames and removes it
-// from all other groups. Groups not already present in the document are ignored.
-func SetGroupMembership(doc *yaml.Node, modelName string, groupNames []string) {
-	root := rootMapping(doc)
-	groups := mappingGet(root, "groups")
-	if groups == nil {
-		return
-	}
-	wanted := make(map[string]bool, len(groupNames))
-	for _, g := range groupNames {
-		wanted[g] = true
-	}
-	for i := 0; i+1 < len(groups.Content); i += 2 {
-		name := groups.Content[i].Value
-		group := groups.Content[i+1]
-		if group.Kind != yaml.MappingNode {
-			continue
-		}
-		members := mappingGet(group, "members")
-		if members == nil {
-			if !wanted[name] {
-				continue
-			}
-			members = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
-			mappingSet(group, "members", members)
-		}
-		if wanted[name] {
-			seqAppend(members, modelName)
-		} else {
-			seqRemove(members, modelName)
-		}
-	}
-}
+// // SetGroupMembership adds modelName to each group in groupNames and removes it
+// // from all other groups. Groups not already present in the document are ignored.
+// func SetGroupMembership(doc *yaml.Node, modelName string, groupNames []string) {
+// 	root := rootMapping(doc)
+// 	groups := mappingGet(root, "groups")
+// 	if groups == nil {
+// 		return
+// 	}
+// 	wanted := make(map[string]bool, len(groupNames))
+// 	for _, g := range groupNames {
+// 		wanted[g] = true
+// 	}
+// 	for i := 0; i+1 < len(groups.Content); i += 2 {
+// 		name := groups.Content[i].Value
+// 		group := groups.Content[i+1]
+// 		if group.Kind != yaml.MappingNode {
+// 			continue
+// 		}
+// 		members := mappingGet(group, "members")
+// 		if members == nil {
+// 			if !wanted[name] {
+// 				continue
+// 			}
+// 			members = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+// 			mappingSet(group, "members", members)
+// 		}
+// 		if wanted[name] {
+// 			seqAppend(members, modelName)
+// 		} else {
+// 			seqRemove(members, modelName)
+// 		}
+// 	}
+// }
 
 // --- yaml.Node helpers ---
 
