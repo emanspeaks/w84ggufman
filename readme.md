@@ -229,6 +229,10 @@ Add w84ggufman as a flake input and import the NixOS module:
             # reads the hardware total, not your pages_limit allocation.
             # vramGiB        = 115.0;  # your TTM allocation in GiB
             # warnVramPercent = 80;    # default; warn above 80% of vramGiB
+
+            # llama-swap integration — keep config.yaml in sync with downloads
+            # and deletes. The file must be writable by the service user/group.
+            # llamaSwapConfig = "/ai/llama-swap/config.yaml";
           };
         }
       ];

@@ -16,6 +16,7 @@ let
     warnDownloadGiB   = cfg.warnDownloadGiB;
     vramGiB           = cfg.vramGiB;
     warnVramPercent   = cfg.warnVramPercent;
+    llamaSwapConfig   = cfg.llamaSwapConfig;
   });
 in {
   options.services.w84ggufman = {
@@ -93,6 +94,18 @@ in {
       type    = lib.types.float;
       default = 80.0;
       description = "Quant tiles whose total size exceeds this percentage of vramGiB (or detected VRAM) are highlighted with a warning. Set to 0 to disable.";
+    };
+
+    llamaSwapConfig = lib.mkOption {
+      type    = lib.types.str;
+      default = "";
+      description = ''
+        Path to the llama-swap config.yaml file to keep in sync with downloads
+        and deletes. When set, w84ggufman writes model entries to this file
+        whenever a model is downloaded or deleted; llama-swap reloads it
+        automatically. The file must be writable by serviceUser or serviceGroup.
+        Leave empty (the default) to disable llama-swap config management.
+      '';
     };
 
     serviceUser = lib.mkOption {
