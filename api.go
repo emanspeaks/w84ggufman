@@ -535,7 +535,7 @@ func (s *server) handleReadme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.cfg.HFToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.cfg.HFToken)
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(s.cfg.HFToken))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

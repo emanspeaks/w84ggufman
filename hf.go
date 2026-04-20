@@ -62,7 +62,7 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 		return nil, err
 	}
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -202,7 +202,7 @@ func fetchTreeSizes(repoID, token string) map[string]int64 {
 			break
 		}
 		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {

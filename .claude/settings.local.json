@@ -5,7 +5,8 @@
       "Bash(\"/c/Program Files/Go/bin/go\" mod tidy)",
       "Bash(\"/c/Program Files/Go/bin/go\" build ./...)",
       "Bash(npx markdownlint-cli2 *)",
-      "Bash(GOOS=linux GOARCH=amd64 \"/c/Program Files/Go/bin/go\" vet ./...)"
+      "Bash(GOOS=linux GOARCH=amd64 \"/c/Program Files/Go/bin/go\" vet ./...)",
+      "Read(//c/scratch/git/nixos-cfg/moss/services/w84ggufman.nix)"
     ]
   }
 }
