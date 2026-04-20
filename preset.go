@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/emanspeaks/w84ggufman/internal/ini"
@@ -79,4 +80,18 @@ func (p *presetManager) HasModel(name string) (bool, error) {
 	}
 	_, ok := f.Sections[name]
 	return ok, nil
+}
+
+// ReadAll returns the full contents of models.ini as a string.
+func (p *presetManager) ReadAll() (string, error) {
+	data, err := os.ReadFile(p.path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return string(data), err
+}
+
+// WriteAll writes body as the full contents of models.ini.
+func (p *presetManager) WriteAll(body string) error {
+	return os.WriteFile(p.path, []byte(body), 0664)
 }

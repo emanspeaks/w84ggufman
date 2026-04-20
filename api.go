@@ -414,6 +414,8 @@ type statusResponse struct {
 	VramUsedKnown      bool     `json:"vramUsedKnown"`
 	WarnVramBytes      uint64   `json:"warnVramBytes"`
 	LoadedModels       []string `json:"loadedModels"`
+	LlamaSwapEnabled   bool     `json:"llamaSwapEnabled"`
+	LlamaServiceLabel  string   `json:"llamaServiceLabel"`
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +453,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		VramUsedKnown:      false,
 		WarnVramBytes:      warnVram,
 		LoadedModels:       loadedIDs,
+		LlamaSwapEnabled:   s.llamaSwap != nil,
+		LlamaServiceLabel:  strings.TrimSuffix(s.cfg.LlamaService, ".service"),
 	})
 }
 
@@ -697,6 +701,105 @@ func (s *server) handleRestartSelf(w http.ResponseWriter, r *http.Request) {
 			log.Printf("error: restart self %s: %v", s.cfg.SelfService, err)
 		}
 	}()
+}
+
+// -- llama-swap per-model raw YAML handlers --
+
+func (s *server) handleGetLlamaSwapRaw(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "invalid model name", http.StatusBadRequest)
+		return
+	}
+	body, err := s.llamaSwap.ReadRaw(name)
+	if err != nil {
+		http.Error(w, "failed to read config.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(body))
+}
+
+func (s *server) handlePutLlamaSwapRaw(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		http.Error(w, "invalid model name", http.StatusBadRequest)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		http.Error(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.llamaSwap.WriteRaw(name, strings.TrimRight(string(raw), "\r\n")); err != nil {
+		http.Error(w, "failed to write config.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// -- Full config file handlers (llama-swap config.yaml or models.ini) --
+
+func (s *server) handleGetLlamaSwapConfig(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+		return
+	}
+	body, err := s.llamaSwap.ReadAll()
+	if err != nil {
+		http.Error(w, "failed to read config.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(body))
+}
+
+func (s *server) handlePutLlamaSwapConfig(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.llamaSwap.WriteAll(string(raw)); err != nil {
+		http.Error(w, "failed to write config.yaml: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleGetPresetConfig(w http.ResponseWriter, r *http.Request) {
+	body, err := s.preset.ReadAll()
+	if err != nil {
+		http.Error(w, "failed to read models.ini: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(body))
+}
+
+func (s *server) handlePutPresetConfig(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "failed to read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.preset.WriteAll(string(raw)); err != nil {
+		http.Error(w, "failed to write models.ini: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

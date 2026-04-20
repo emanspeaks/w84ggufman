@@ -158,6 +158,55 @@ func HasModel(doc *yaml.Node, name string) bool {
 	return models != nil && mappingGet(models, name) != nil
 }
 
+// ReadModelRaw serializes the named model's entry (the YAML mapping under its
+// key) to a plain-text YAML block suitable for display in a text editor.
+// Returns an empty string if the model is not present.
+func ReadModelRaw(doc *yaml.Node, name string) (string, error) {
+	root := rootMapping(doc)
+	models := mappingGet(root, "models")
+	if models == nil {
+		return "", nil
+	}
+	entry := mappingGet(models, name)
+	if entry == nil {
+		return "", nil
+	}
+	var sb strings.Builder
+	enc := yaml.NewEncoder(&sb)
+	enc.SetIndent(2)
+	if err := enc.Encode(entry); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// WriteModelRaw parses body as a YAML mapping and replaces the named model's
+// entry in the models section. Returns an error if the model is not present or
+// body is not valid YAML.
+func WriteModelRaw(doc *yaml.Node, name, body string) error {
+	root := rootMapping(doc)
+	models := mappingGet(root, "models")
+	if models == nil {
+		return fmt.Errorf("no models section in config.yaml")
+	}
+	if mappingGet(models, name) == nil {
+		return fmt.Errorf("model %q not found in config.yaml", name)
+	}
+	var parsed yaml.Node
+	if err := yaml.Unmarshal([]byte(body), &parsed); err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	entry := rootMapping(&parsed)
+	if entry == nil || entry.Kind != yaml.MappingNode {
+		return fmt.Errorf("YAML body must be a mapping (key: value pairs)")
+	}
+	mappingSet(models, name, entry)
+	return nil
+}
+
 // --- yaml.Node helpers ---
 
 func rootMapping(doc *yaml.Node) *yaml.Node {

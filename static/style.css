@@ -46,12 +46,24 @@ html.light .status-menu { background: #fff; border-color: #e2e8f0; box-shadow: 0
 html.light .status-menu button { color: #475569; }
 html.light .status-menu button:hover { background: #f1f5f9; color: #0f172a; }
 #theme-toggle {
-  background: transparent; border: 1px solid #334155; color: #94a3b8;
-  font-size: 0.85rem; padding: 4px 8px; border-radius: 5px;
-  cursor: pointer; line-height: 1; flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  display: flex; align-items: center; gap: 5px;
+  background: transparent; border: none; padding: 2px;
+  cursor: pointer; flex-shrink: 0;
+  transition: opacity 0.15s;
 }
-#theme-toggle:hover { background: #1e293b; color: #f1f5f9; }
+#theme-toggle:hover { opacity: 0.75; }
+.theme-icon { font-size: 0.75rem; line-height: 1; }
+.theme-track {
+  width: 28px; height: 16px; border-radius: 8px;
+  background: #1e293b; border: 1px solid #475569;
+  position: relative; transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.theme-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #64748b; transition: transform 0.2s, background 0.2s;
+}
 /* ── Layout ──────────────────────────────────────────────────────────── */
 main {
   display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 1.25rem;
@@ -239,8 +251,8 @@ input[type="text"]:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,
 html.light body            { background: #f8fafc; color: #0f172a; }
 html.light header          { background: #f1f5f9; color: #0f172a; border-bottom-color: #cbd5e1; }
 html.light #app-version    { color: #94a3b8; }
-html.light #theme-toggle   { border-color: #cbd5e1; color: #475569; }
-html.light #theme-toggle:hover { background: #e2e8f0; color: #0f172a; }
+html.light .theme-track { background: #e2e8f0; border-color: #94a3b8; }
+html.light .theme-thumb { transform: translateX(12px); background: #64748b; }
 html.light section         { background: #ffffff; border-color: #e2e8f0; }
 html.light .section-header h2 { color: #1e293b; }
 html.light .btn-secondary  { background: #e2e8f0; color: #475569; }

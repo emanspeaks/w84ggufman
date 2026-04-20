@@ -26,8 +26,10 @@ Init
 JSONC
 ldflags
 llama-cpp
+llamaswap
 lockfile
 Menlo
+mlock
 mmproj
 Mmproj
 monospace

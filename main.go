@@ -71,6 +71,12 @@ func main() {
 	mux.HandleFunc("GET /api/preset/raw/{name}", srv.handleGetPresetRaw)
 	mux.HandleFunc("PUT /api/preset/raw/{name}", srv.handleUpdatePresetRaw)
 	mux.HandleFunc("POST /api/preset/{name}", srv.handleUpdatePresetModel)
+	mux.HandleFunc("GET /api/preset/config", srv.handleGetPresetConfig)
+	mux.HandleFunc("PUT /api/preset/config", srv.handlePutPresetConfig)
+	mux.HandleFunc("GET /api/llamaswap/raw/{name}", srv.handleGetLlamaSwapRaw)
+	mux.HandleFunc("PUT /api/llamaswap/raw/{name}", srv.handlePutLlamaSwapRaw)
+	mux.HandleFunc("GET /api/llamaswap/config", srv.handleGetLlamaSwapConfig)
+	mux.HandleFunc("PUT /api/llamaswap/config", srv.handlePutLlamaSwapConfig)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("w84ggufman %s listening on %s", version, addr)

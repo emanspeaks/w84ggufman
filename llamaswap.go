@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+
 	"github.com/emanspeaks/w84ggufman/internal/llamaswap"
 )
 
@@ -51,4 +53,41 @@ func (m *llamaSwapManager) HasModel(name string) (bool, error) {
 		return false, err
 	}
 	return llamaswap.HasModel(doc, name), nil
+}
+
+// ReadRaw returns the YAML block for a single model entry, suitable for
+// display in a text editor.
+func (m *llamaSwapManager) ReadRaw(name string) (string, error) {
+	doc, err := llamaswap.LoadFile(m.path)
+	if err != nil {
+		return "", err
+	}
+	return llamaswap.ReadModelRaw(doc, name)
+}
+
+// WriteRaw parses body as a YAML mapping and replaces the named model's entry
+// in config.yaml.
+func (m *llamaSwapManager) WriteRaw(name, body string) error {
+	doc, err := llamaswap.LoadFile(m.path)
+	if err != nil {
+		return err
+	}
+	if err := llamaswap.WriteModelRaw(doc, name, body); err != nil {
+		return err
+	}
+	return llamaswap.WriteFile(m.path, doc)
+}
+
+// ReadAll returns the full contents of config.yaml as a string.
+func (m *llamaSwapManager) ReadAll() (string, error) {
+	data, err := os.ReadFile(m.path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return string(data), err
+}
+
+// WriteAll writes body as the full contents of config.yaml.
+func (m *llamaSwapManager) WriteAll(body string) error {
+	return os.WriteFile(m.path, []byte(body), 0664)
 }

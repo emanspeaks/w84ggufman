@@ -23,10 +23,15 @@
     <span id="status-indicator" class="status-unknown" title="Click for options">connecting…</span>
     <div class="status-menu" id="status-menu">
       <button id="restart-btn">Restart llama-server</button>
+      <button id="edit-config-btn">Edit config…</button>
       <button id="restart-self-btn">Restart w84ggufman</button>
     </div>
   </div>
-  <button id="theme-toggle" title="Toggle light/dark mode">☀</button>
+  <button id="theme-toggle" title="Toggle light/dark mode">
+    <span class="theme-icon">🌙</span>
+    <div class="theme-track"><div class="theme-thumb"></div></div>
+    <span class="theme-icon">☀</span>
+  </button>
 </header>
 <main>
   <!-- Left panel: Local Models -->

@@ -5,20 +5,19 @@ let activeEventSource = null;
 let warnDownloadBytes = 0;
 let warnVramBytes = 0;
 let diskFreeBytes = 0;
+let llamaSwapEnabled = false;
+let llamaServiceLabel = 'llama-server';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
 (function initTheme() {
-  const stored = localStorage.getItem('theme');
-  const isLight = stored === 'light';
-  if (isLight) document.documentElement.classList.add('light');
-  document.getElementById('theme-toggle').textContent = isLight ? '🌙' : '☀';
+  if (localStorage.getItem('theme') === 'light')
+    document.documentElement.classList.add('light');
 })();
 
 document.getElementById('theme-toggle').addEventListener('click', () => {
   const isLight = document.documentElement.classList.toggle('light');
   localStorage.setItem('theme', isLight ? 'light' : 'dark');
-  document.getElementById('theme-toggle').textContent = isLight ? '🌙' : '☀';
 });
 
 // ── Utilities ──────────────────────────────────────────────────────────────
@@ -512,10 +511,10 @@ document.getElementById('status-indicator').addEventListener('click', toggleStat
 
 async function restartService() {
   document.getElementById('status-menu').classList.remove('open');
-  if (!confirm('Restart llama-server service?\n\nThe server will be briefly unavailable.')) return;
+  if (!confirm(`Restart ${llamaServiceLabel} service?\n\nThe server will be briefly unavailable.`)) return;
   const btn = document.getElementById('restart-btn');
   btn.disabled = true;
-  setStatusBar('Restart', 'Restarting llama-server…', true);
+  setStatusBar('Restart', `Restarting ${llamaServiceLabel}…`, true);
   try {
     const resp = await fetch('/api/restart', { method: 'POST' });
     if (!resp.ok) throw new Error(await resp.text());
@@ -552,10 +551,12 @@ async function restartSelf() {
 
 // ── Config modal ───────────────────────────────────────────────────────────
 
-async function openConfigModal(name) {
+// openRawEditModal is the shared implementation for both per-model and
+// full-file config editing modals.
+async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg }) {
   let body = '';
   try {
-    const resp = await fetch('/api/preset/raw/' + encodeURIComponent(name));
+    const resp = await fetch(endpoint);
     if (resp.ok) body = await resp.text();
   } catch (_) {}
 
@@ -564,10 +565,9 @@ async function openConfigModal(name) {
   backdrop.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-title" id="modal-title">
-        Config
-        <small>${esc(name)}</small>
+        ${esc(title)}${subtitle ? ' <small>' + esc(subtitle) + '</small>' : ''}
       </div>
-      <textarea spellcheck="false" placeholder="; llama-server preset settings for this model\nmodel = /path/to/model.gguf\nctx-size = 65536">${esc(body)}</textarea>
+      <textarea spellcheck="false" placeholder="${esc(placeholder)}">${esc(body)}</textarea>
       <div class="modal-actions">
         <button class="btn-secondary" id="modal-cancel">Cancel</button>
         <button class="btn-primary" id="modal-save">Save</button>
@@ -593,14 +593,14 @@ async function openConfigModal(name) {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
-      const resp = await fetch('/api/preset/raw/' + encodeURIComponent(name), {
+      const resp = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain' },
         body: ta.value,
       });
       if (!resp.ok) throw new Error(await resp.text());
       closeModal();
-      setStatusBar('Ready', 'Config saved for ' + name, false);
+      setStatusBar('Ready', successMsg, false);
     } catch (e) {
       setStatusBar('Error', 'Save failed: ' + e.message, false);
       saveBtn.disabled = false;
@@ -608,13 +608,37 @@ async function openConfigModal(name) {
     }
   });
 
-  // Close on backdrop click (outside the modal box).
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
   document.addEventListener('keydown', onKey);
-
   document.body.appendChild(backdrop);
   ta.focus();
   ta.setSelectionRange(0, 0);
+}
+
+async function openConfigModal(name) {
+  const endpoint = llamaSwapEnabled
+    ? '/api/llamaswap/raw/' + encodeURIComponent(name)
+    : '/api/preset/raw/' + encodeURIComponent(name);
+  const placeholder = llamaSwapEnabled
+    ? 'cmd: >-\n  /ai/llama-swap/bin/llama-server --port ${PORT}\n  -m /path/to/model.gguf\n  --alias ModelName\n  --no-webui -ngl 999 --no-mmap --flash-attn --mlock -c 65536 --jinja\nttl: 0'
+    : '; llama-server preset settings for this model\nmodel = /path/to/model.gguf\nctx-size = 65536';
+  await openRawEditModal({
+    title: 'Config', subtitle: name,
+    endpoint, placeholder,
+    successMsg: 'Config saved for ' + name,
+  });
+}
+
+async function openFullConfigModal() {
+  document.getElementById('status-menu').classList.remove('open');
+  const isSwap = llamaSwapEnabled;
+  const endpoint = isSwap ? '/api/llamaswap/config' : '/api/preset/config';
+  const filename = isSwap ? 'config.yaml' : 'models.ini';
+  await openRawEditModal({
+    title: 'Edit ' + filename, subtitle: null,
+    endpoint, placeholder: '',
+    successMsg: filename + ' saved',
+  });
 }
 
 // ── README ─────────────────────────────────────────────────────────────────
@@ -645,7 +669,12 @@ async function pollStatus() {
     if (!resp.ok) return;
     const s = await resp.json();
     const el = document.getElementById('status-indicator');
-    el.textContent = s.llamaReachable ? 'llama-server: online' : 'llama-server: offline';
+    if (s.llamaServiceLabel) {
+      llamaServiceLabel = s.llamaServiceLabel;
+      document.getElementById('restart-btn').textContent = 'Restart ' + llamaServiceLabel;
+    }
+    if (s.llamaSwapEnabled != null) llamaSwapEnabled = s.llamaSwapEnabled;
+    el.textContent = llamaServiceLabel + ': ' + (s.llamaReachable ? 'online' : 'offline');
     el.className = 'status-indicator ' + (s.llamaReachable ? 'status-online' : 'status-offline');
     if (s.version) {
       const ver = document.getElementById('app-version');
@@ -693,6 +722,7 @@ async function pollStatus() {
 document.getElementById('refresh-btn').addEventListener('click', () => { fetchLocalModels(); pollStatus(); });
 document.getElementById('browse-btn').addEventListener('click', browseRepo);
 document.getElementById('restart-btn').addEventListener('click', restartService);
+document.getElementById('edit-config-btn').addEventListener('click', openFullConfigModal);
 document.getElementById('restart-self-btn').addEventListener('click', restartSelf);
 document.getElementById('cancel-dl-btn').addEventListener('click', cancelDownload);
 document.getElementById('status-menu').addEventListener('click', (e) => e.stopPropagation());
