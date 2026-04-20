@@ -12,3 +12,7 @@ schema = 3
   [mod.'github.com/yuin/goldmark']
     version = 'v1.8.2'
     hash = 'sha256-LoWfW1Tb6mNuMR7SoA/4SJv4pTKfsVXqeXEVm4uEQ7Q='
+
+  [mod.'gopkg.in/yaml.v3']
+    version = 'v3.0.1'
+    hash = 'sha256-FqL9TKYJ0XkNwJFnq9j0VvJ5ZUU1RvH/52h/f5bkYAU='

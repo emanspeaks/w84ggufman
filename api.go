@@ -21,15 +21,16 @@ type server struct {
 	cfg       Config
 	dl        *downloader
 	preset    *presetManager
+	llamaSwap *llamaSwapManager
 	vramBytes uint64
 }
 
-func newServer(cfg Config, dl *downloader, pm *presetManager) *server {
+func newServer(cfg Config, dl *downloader, pm *presetManager, lsm *llamaSwapManager) *server {
 	vram := uint64(cfg.VramGiB * 1024 * 1024 * 1024)
 	if vram == 0 {
 		vram = detectVRAMBytes()
 	}
-	return &server{cfg: cfg, dl: dl, preset: pm, vramBytes: vram}
+	return &server{cfg: cfg, dl: dl, preset: pm, llamaSwap: lsm, vramBytes: vram}
 }
 
 type diskInfo struct {
@@ -389,6 +390,11 @@ func (s *server) handleDeleteLocal(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.preset.RemoveModel(name); err != nil {
 		log.Printf("warning: failed to remove %s from models.ini: %v", name, err)
+	}
+	if s.llamaSwap != nil {
+		if err := s.llamaSwap.RemoveModel(name); err != nil {
+			log.Printf("warning: failed to remove %s from config.yaml: %v", name, err)
+		}
 	}
 	if err := restartService(s.cfg.LlamaService); err != nil {
 		log.Printf("warning: failed to restart %s: %v", s.cfg.LlamaService, err)

@@ -45,8 +45,9 @@ func main() {
 	ensureManagedINI(cfg.ModelsDir)
 
 	pm := newPresetManager(cfg)
-	dl := newDownloader(cfg, pm)
-	srv := newServer(cfg, dl, pm)
+	lsm := newLlamaSwapManager(cfg)
+	dl := newDownloader(cfg, pm, lsm)
+	srv := newServer(cfg, dl, pm, lsm)
 
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
