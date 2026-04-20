@@ -245,12 +245,15 @@ func ListModels(doc *yaml.Node) []ModelEntry {
 			continue
 		}
 		cmd := cmdNode.Value
-		isSD := strings.Contains(cmd, "sd-server")
-		modelPath := ""
-		if isSD {
+		modelPath := extractCmdFlag(cmd, "-m")
+		isSD := false
+		if modelPath == "" {
 			modelPath = extractCmdFlag(cmd, "--diffusion-model")
-		} else {
-			modelPath = extractCmdFlag(cmd, "-m")
+			if modelPath != "" {
+				isSD = true
+			} else {
+				isSD = strings.Contains(cmd, "sd-server")
+			}
 		}
 		result = append(result, ModelEntry{
 			Name:       name,

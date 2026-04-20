@@ -1,4 +1,5 @@
 agenix
+AMDGPUVRAM
 APUs
 Bavail
 btn-danger
@@ -10,6 +11,7 @@ Consolas
 cpp
 dir
 fdinfo
+fdinfos
 gguf
 GGUF
 ggufman
@@ -23,6 +25,7 @@ gotools
 HFURL
 HuggingFace
 Init
+iogpu
 JSONC
 ldflags
 llama-cpp
@@ -62,6 +65,7 @@ systemd
 tmpfiles
 toobig
 tqdm
+uapi
 unsloth
 vtype
 yuin

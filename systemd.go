@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 )
@@ -27,19 +26,4 @@ func restartService(name string) error {
 	return nil
 }
 
-// serviceMainPID returns the MainPID of a running systemd service, or 0 on error.
-func serviceMainPID(name string) uint32 {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	conn, err := dbus.NewSystemConnectionContext(ctx)
-	if err != nil {
-		return 0
-	}
-	defer conn.Close()
-	props, err := conn.GetUnitPropertiesContext(ctx, name)
-	if err != nil {
-		return 0
-	}
-	pid, _ := props["MainPID"].(uint32)
-	return pid
-}
+// serviceMainPID: see systemd_unused.go (//go:build ignore)
