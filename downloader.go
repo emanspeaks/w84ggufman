@@ -80,15 +80,16 @@ type downloadJob struct {
 }
 
 type downloader struct {
-	cfg      Config
-	preset   *presetManager
-	mu       sync.Mutex
-	active   string
-	busy     bool
-	lines    []string
-	cancel   context.CancelFunc
+	cfg       Config
+	preset    *presetManager
+	llamaSwap *llamaSwapManager
+	mu        sync.Mutex
+	active    string
+	busy      bool
+	lines     []string
+	cancel    context.CancelFunc
 	totalBytes int64
-	progress *progressInfo
+	progress  *progressInfo
 }
 
 // removeAllWritable chmod-walks path to make every entry owner-writable before
@@ -126,8 +127,8 @@ func dirSize(path string) int64 {
 	return total
 }
 
-func newDownloader(cfg Config, pm *presetManager) *downloader {
-	return &downloader{cfg: cfg, preset: pm}
+func newDownloader(cfg Config, pm *presetManager, lsm *llamaSwapManager) *downloader {
+	return &downloader{cfg: cfg, preset: pm, llamaSwap: lsm}
 }
 
 // modelNameFromFilename strips shard suffixes and .gguf to derive a directory name.
@@ -481,6 +482,16 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 		}
 	}
 
+	// Determine VAE path for Stable Diffusion models (ae.safetensors or *.vae.safetensors).
+	vaeAbsPath := ""
+	for _, sf := range sidecarFiles {
+		lower := strings.ToLower(filepath.Base(sf))
+		if lower == "ae.safetensors" || strings.HasSuffix(lower, ".vae.safetensors") {
+			vaeAbsPath = filepath.Join(parentDir, filepath.Base(sf))
+			break
+		}
+	}
+
 	for i, job := range jobs {
 		// Update the active label so the status bar shows which quant is running.
 		if len(jobs) > 1 {
@@ -525,6 +536,11 @@ func (d *downloader) run(ctx context.Context, repoID string, jobs []downloadJob,
 		modelPath := findModelFile(job.destDir, job.pattern)
 		if err := d.preset.AddModel(job.name, modelPath, mmprojAbsPath); err != nil {
 			d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update models.ini: %v", err))
+		}
+		if d.llamaSwap != nil {
+			if err := d.llamaSwap.AddModel(job.name, modelPath, mmprojAbsPath, vaeAbsPath); err != nil {
+				d.appendLine(fmt.Sprintf("[w84ggufman] warning: could not update config.yaml: %v", err))
+			}
 		}
 	}
 

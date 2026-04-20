@@ -1,8 +1,8 @@
 # w84ggufman
 
 A self-contained Go web application for managing GGUF model files used by a
-[llama-server](https://github.com/ggml-org/llama.cpp) instance running in router
-mode (`--models-dir`).
+[llama-server](https://github.com/ggml-org/llama.cpp) instance running in router mode (`--models-dir`) or a
+[llama-swap](https://github.com/mostlygeek/llama-swap) proxy.
 
 ## Features
 
@@ -17,7 +17,7 @@ mode (`--models-dir`).
 ## Environment
 
 | Assumption | Value |
-|---|---|
+| --- | --- |
 | llama-server URL | `http://localhost:9292` |
 | Models directory | `/var/lib/llama-models/` |
 | `hf` binary | `python3Packages.huggingface-hub` on PATH |
@@ -77,20 +77,27 @@ pass it with `--config`:
   // Quant tiles whose total size exceeds this % of vramGiB are highlighted
   // with an amber warning, and the download confirmation dialog is shown.
   // Default: 80. Set to 0 to disable.
-  "warnVramPercent": 80
+  "warnVramPercent": 80,
+
+  // Path to the llama-swap config.yaml to keep in sync with downloads and
+  // deletes. When set, w84ggufman writes model entries to this file (in
+  // addition to models.ini) whenever a model is downloaded or deleted.
+  // llama-swap reloads the file automatically — no restart needed.
+  // Leave empty (the default) to disable llama-swap config management.
+  "llamaSwapConfig": "/ai/llama-swap/config.yaml"
 }
 ```
 
 ## VRAM / memory warnings
 
 When `vramGiB` is known (either auto-detected or set in config), quant tiles in
-the model browser are colour-coded:
+the model browser are color-coded:
 
 | Tile style | Meaning |
-|---|---|
+| --- | --- |
 | Normal | Fits comfortably within VRAM |
 | Amber border + ⚠ | Exceeds `warnVramPercent`% of your VRAM (default 80%) |
-| Greyed out | Would exceed free disk space |
+| Grayed out | Would exceed free disk space |
 
 A confirmation dialog is shown before starting a download that exceeds the VRAM
 threshold.
@@ -144,8 +151,8 @@ installs the polkit rule automatically, covering both `llamaService` and
 
 ### NixOS — running the binary directly
 
-If you're running the binary outside of the NixOS module (e.g. from a nix shell,
-`nix run`, or a hand-written systemd unit), the polkit rule is **not** installed
+If you're running the binary outside the NixOS module (e.g. from a nix shell,
+`nix run`, or a handwritten systemd unit), the polkit rule is **not** installed
 automatically. Add it to your `configuration.nix`:
 
 ```nix
@@ -265,7 +272,7 @@ so you do **not** need a tmpfiles rule for it.
 ### What the module handles automatically
 
 | Thing | How |
-|---|---|
+| --- | --- |
 | `w84ggufman` system user | `users.users.w84ggufman` with `isSystemUser = true` |
 | `HF_HOME` | Set to `${modelsDir}/.hf-cache` so `hf` never tries to write to `/.cache` |
 | `.hf-cache` directory | Created via `systemd.tmpfiles` owned by the service user |
@@ -292,7 +299,7 @@ gomod2nix generate
 ## API
 
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | `GET` | `/api/local` | List local models with size and loaded status |
 | `GET` | `/api/repo?id={owner/repo}` | List GGUF files in a HuggingFace repo |
 | `POST` | `/api/download` | Start a download `{"repoId":"…","filename":"…"}` |

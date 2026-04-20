@@ -89,7 +89,7 @@ func Parse(r io.Reader) (*File, error) {
 	return out, scanner.Err()
 }
 
-// Write serialises f to w. [*] is always written first; remaining
+// Write serializes f to w. [*] is always written first; remaining
 // sections are written in alphabetical order. Keys within each section are
 // written in alphabetical order.
 func (f *File) Write(w io.Writer) error {

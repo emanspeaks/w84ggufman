@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Program Files/Go/bin/go\" get gopkg.in/yaml.v3)",
+      "Bash(\"/c/Program Files/Go/bin/go\" mod tidy)",
+      "Bash(\"/c/Program Files/Go/bin/go\" build ./...)",
+      "Bash(npx markdownlint-cli2 *)",
+      "Bash(GOOS=linux GOARCH=amd64 \"/c/Program Files/Go/bin/go\" vet ./...)"
+    ]
+  }
+}
