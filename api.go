@@ -97,13 +97,43 @@ func isOrgDir(dir string) bool {
 	return true
 }
 
+// defaultIgnorePatterns are the patterns applied to top-level modelsDir entries
+// unless overridden by a .w84ggufman.json at the modelsDir root.
+var defaultIgnorePatterns = []string{".cache", ".w84ggufman*"}
+
+// matchesIgnorePattern reports whether name matches a single gitignore-style
+// glob pattern (uses filepath.Match semantics: * matches within a segment).
+func matchesIgnorePattern(name, pattern string) bool {
+	matched, _ := filepath.Match(pattern, name)
+	return matched
+}
+
+// isIgnoredEntry reports whether a top-level entry should be excluded from
+// the local models listing. patterns is the active ignore list; showDotFiles
+// controls whether dot-prefixed entries are visible (ignore list always applies).
+func isIgnoredEntry(name string, patterns []string, showDotFiles bool) bool {
+	if !showDotFiles && strings.HasPrefix(name, ".") {
+		return true
+	}
+	for _, p := range patterns {
+		if matchesIgnorePattern(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // scanFilesRelative returns all regular files under dir as forward-slash
-// relative paths, together with the total size in bytes.
+// relative paths (skipping the w84ggufman metadata file), together with
+// the total size in bytes.
 func scanFilesRelative(dir string) ([]string, int64) {
 	var files []string
 	var total int64
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
+			return nil
+		}
+		if info.Name() == metaFilename {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
@@ -182,11 +212,21 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		return aliases
 	}
 
+	// Determine active ignore patterns: check for .w84ggufman.json at modelsDir root.
+	rootMeta := readModelMeta(s.cfg.ModelsDir)
+	ignorePatterns := rootMeta.Ignore
+	if len(ignorePatterns) == 0 {
+		ignorePatterns = defaultIgnorePatterns
+	}
+
 	models := make([]localModel, 0)
 	entries, _ := os.ReadDir(s.cfg.ModelsDir)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if isIgnoredEntry(entry.Name(), ignorePatterns, s.cfg.ShowDotFiles) {
 			continue
 		}
 		dirPath := filepath.Join(s.cfg.ModelsDir, entry.Name())
@@ -240,7 +280,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 				if len(ggufFiles) > 0 {
 					repoID = detectRepoIDFromGGUF(dirPath, ggufFiles)
 					if repoID != "" {
-						_ = writeModelMeta(dirPath, repoID)
+						_ = writeModelMeta(dirPath, modelMeta{RepoID: repoID})
 					} else {
 						sourceUnknown = true
 					}
@@ -510,8 +550,73 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoDir := filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(repoID))
-	repoInfo.PresentFiles, _ = scanFilesRelative(repoDir)
+	localFiles, _ := scanFilesRelative(repoDir)
+	repoInfo.PresentFiles, repoInfo.RogueFiles = matchLocalToHF(localFiles, repoInfo)
 	writeJSON(w, repoInfo)
+}
+
+// matchLocalToHF matches local files to HF files by basename (handling path
+// mismatches from old layouts), returning the set of local relative paths that
+// matched (presentFiles) and those that didn't (rogueFiles).
+func matchLocalToHF(localFiles []string, info *HFRepoInfo) (present []string, rogue []string) {
+	// Build basename → true from all HF files (models + sidecars).
+	hfBasenames := make(map[string]struct{})
+	for _, f := range info.Models {
+		hfBasenames[filepath.Base(f.Filename)] = struct{}{}
+	}
+	for _, f := range info.Sidecars {
+		hfBasenames[filepath.Base(f.Filename)] = struct{}{}
+	}
+
+	for _, lf := range localFiles {
+		base := filepath.Base(lf)
+		if _, ok := hfBasenames[base]; ok {
+			present = append(present, lf)
+			continue
+		}
+		// Shard fallback: strip shard digits and check if stem matches any HF file.
+		stemmed := shardRe.ReplaceAllString(base, ".gguf")
+		stemBase := strings.TrimSuffix(stemmed, ".gguf")
+		matched := false
+		if stemBase != "" && stemBase != strings.TrimSuffix(base, ".gguf") {
+			for k := range hfBasenames {
+				if strings.TrimSuffix(shardRe.ReplaceAllString(k, ".gguf"), ".gguf") == stemBase {
+					matched = true
+					break
+				}
+			}
+		}
+		if matched {
+			present = append(present, lf)
+		} else {
+			rogue = append(rogue, lf)
+		}
+	}
+	return
+}
+
+func (s *server) handleLocalFiles(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" || strings.Contains(id, "..") {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var repoDir string
+	if filepath.IsAbs(id) {
+		clean := filepath.Clean(id)
+		if !strings.HasPrefix(clean, filepath.Clean(s.cfg.ModelsDir)+string(filepath.Separator)) {
+			http.Error(w, "path not under models dir", http.StatusBadRequest)
+			return
+		}
+		repoDir = clean
+	} else {
+		repoDir = filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(id))
+	}
+	files, _ := scanFilesRelative(repoDir)
+	writeJSON(w, &HFRepoInfo{
+		LocalOnly:  true,
+		RogueFiles: files,
+	})
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -587,6 +692,22 @@ func (s *server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// findFileByBasename walks dir recursively and returns the first file whose
+// base name equals target, or "" if not found.
+func findFileByBasename(dir, target string) string {
+	var found string
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || found != "" {
+			return nil
+		}
+		if info.Name() == target {
+			found = path
+		}
+		return nil
+	})
+	return found
+}
+
 func (s *server) handleDeleteFiles(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepoID string   `json:"repoId"`
@@ -618,6 +739,15 @@ func (s *server) handleDeleteFiles(w http.ResponseWriter, r *http.Request) {
 		if fullPath != repoDir && !strings.HasPrefix(fullPath, repoDir+sep) {
 			errMsgs = append(errMsgs, "path traversal: "+f)
 			continue
+		}
+		// If exact path not found, search recursively by basename (handles files
+		// that were misplaced by the old-layout migration).
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			base := filepath.Base(fullPath)
+			fullPath = findFileByBasename(repoDir, base)
+		}
+		if fullPath == "" {
+			continue // not found anywhere — silently skip
 		}
 		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 			log.Printf("warning: delete file %q: %v", fullPath, err)

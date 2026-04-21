@@ -37,6 +37,8 @@ func main() {
 		os.Exit(0)
 	}
 
+	log.Printf("w84ggufman %s starting", version)
+
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
@@ -47,6 +49,7 @@ func main() {
 	pm := newPresetManager(cfg)
 	lsm := newLlamaSwapManager(cfg)
 	migrateOldLayout(cfg, pm, lsm)
+	reorganizeExistingLayout(cfg, pm, lsm)
 	dl := newDownloader(cfg, pm, lsm)
 	srv := newServer(cfg, dl, pm, lsm)
 
@@ -66,6 +69,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/local/{name}", srv.handleDeleteLocal)
 	mux.HandleFunc("DELETE /api/local", srv.handleDeleteRepo)
 	mux.HandleFunc("POST /api/local/delete-files", srv.handleDeleteFiles)
+	mux.HandleFunc("GET /api/local-files", srv.handleLocalFiles)
 	mux.HandleFunc("GET /api/status", srv.handleStatus)
 	mux.HandleFunc("POST /api/restart", srv.handleRestart)
 	mux.HandleFunc("POST /api/restart-self", srv.handleRestartSelf)

@@ -45,10 +45,10 @@
     <div id="local-list"><p class="msg-loading">Loading…</p></div>
   </section>
 
-  <!-- Right panel: Add Model -->
+  <!-- Right panel: Select Models -->
   <section>
     <div class="section-header">
-      <h2>Add Model</h2>
+      <h2>Select Models</h2>
     </div>
     <p class="hint">
       Find models at
@@ -57,7 +57,9 @@
     <label for="repo-input" style="font-size:0.825rem;font-weight:500;display:block;margin-bottom:4px">HuggingFace repo ID</label>
     <div class="input-row">
       <input type="text" id="repo-input" placeholder="e.g. unsloth/Qwen3-Coder-Next-GGUF" autocomplete="off" spellcheck="false">
-      <button class="btn-primary" id="browse-btn">Browse</button>
+      <button class="btn-primary" id="browse-btn">Show</button>
+      <a class="btn-secondary" id="hf-link-btn" href="#" target="_blank" rel="noopener"
+         style="text-decoration:none;display:inline-flex;align-items:center;opacity:0.4;pointer-events:none">Browse on HF</a>
     </div>
     <div id="repo-error" class="msg-error" style="display:none"></div>
     <div id="repo-results"></div>

@@ -44,12 +44,13 @@ func scanCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 }
 
 type modelMeta struct {
-	RepoID     string `json:"repoId"`
-	SkipHFSync bool   `json:"skip_hf_sync,omitempty"`
+	RepoID     string   `json:"repoId"`
+	SkipHFSync bool     `json:"skip_hf_sync,omitempty"`
+	Ignore     []string `json:"ignore,omitempty"` // per-dir ignore patterns (replaces server defaults)
 }
 
-func writeModelMeta(dir, repoID string) error {
-	b, _ := json.Marshal(modelMeta{RepoID: repoID})
+func writeModelMeta(dir string, meta modelMeta) error {
+	b, _ := json.Marshal(meta)
 	return os.WriteFile(filepath.Join(dir, metaFilename), b, 0664)
 }
 

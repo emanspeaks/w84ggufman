@@ -140,34 +140,37 @@ function renderLocalModels(models) {
   list.innerHTML = '';
   for (const m of models) {
     const card = document.createElement('div');
-    card.className = 'model-card' + (m.repoId && !m.isLocal ? ' clickable' : '');
+    card.className = 'model-card clickable';
     card.dataset.aliases = (m.loadedAliases || []).join(',');
 
-    let repoLine;
+    let titleText, titleClass = 'model-name';
     if (m.sourceUnknown) {
-      repoLine = `<span class="model-repo-id model-repo-unknown">(source unknown)</span>`;
+      titleText = m.path.split('/').pop() || m.path;
+      titleClass = 'model-name model-name-unknown';
     } else if (m.isLocal) {
-      repoLine = `<span class="model-repo-id">${esc(m.repoId || m.path)} <span class="badge badge-local">local</span></span>`;
+      titleText = m.repoId || m.path.split('/').pop() || m.path;
     } else if (m.repoId) {
-      repoLine = `<span class="model-repo-id">${esc(m.repoId)}</span>`;
+      titleText = m.repoId;
     } else {
-      repoLine = `<span class="model-repo-id model-repo-unknown">(unknown)</span>`;
+      titleText = m.path.split('/').pop() || m.path;
+      titleClass = 'model-name model-name-unknown';
     }
+
+    const badges = [];
+    if (m.isLocal) badges.push(`<span class="badge badge-local">local</span>`);
+    if (m.sourceUnknown) badges.push(`<span class="badge badge-warn-preset">unknown source</span>`);
+    if (m.inConfig) badges.push(`<span class="badge badge-inconfig" title="Referenced in models.ini or config.yaml">In&nbsp;config</span>`);
 
     const loadedAliases = m.loadedAliases || [];
     const loadedHtml = loadedAliases.length > 0
-      ? loadedAliases.map(a => `<span class="badge badge-loaded">${esc(a)}</span>`).join(' ')
+      ? loadedAliases.map(a => `<span class="badge badge-loaded" title="Loaded preset alias from config file">${esc(a)}</span>`).join(' ')
       : `<span class="badge badge-unloaded">Unloaded</span>`;
-
-    const inConfigBadge = m.inConfig
-      ? ` <span class="badge badge-inconfig" title="Referenced in config file">In&nbsp;config</span>`
-      : '';
 
     card.innerHTML = `
       <div class="model-meta">
-        ${repoLine}
+        <span class="${titleClass}">${esc(titleText)}${badges.length ? ' ' + badges.join(' ') : ''}</span>
         <span class="model-detail">
-          ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}${inConfigBadge}
+          ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}
         </span>
         <span class="model-loaded-row">${loadedHtml}</span>
       </div>
@@ -176,13 +179,15 @@ function renderLocalModels(models) {
       </div>
     `;
 
-    if (m.repoId && !m.isLocal) {
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('button')) return;
-        document.getElementById('repo-input').value = m.repoId;
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      if (m.repoId && !m.isLocal) {
+        setRepoInput(m.repoId);
         browseRepo();
-      });
-    }
+      } else {
+        browseLocalPath(m.path, m.repoId || m.path.split('/').pop());
+      }
+    });
 
     card.querySelector('.delete-btn').addEventListener('click', () => deleteRepo(m.repoId, m.path));
     list.appendChild(card);
@@ -206,6 +211,29 @@ async function deleteRepo(repoId, path) {
 
 // ── Repo browser ───────────────────────────────────────────────────────────
 
+function setRepoInput(value) {
+  const input = document.getElementById('repo-input');
+  input.value = value;
+  updateHFLink(value);
+}
+
+function updateHFLink(repoId) {
+  const btn = document.getElementById('hf-link-btn');
+  if (repoId && repoId.includes('/') && !repoId.startsWith('/')) {
+    btn.href = 'https://huggingface.co/' + repoId + '/tree/main';
+    btn.style.opacity = '';
+    btn.style.pointerEvents = '';
+  } else {
+    btn.href = '#';
+    btn.style.opacity = '0.4';
+    btn.style.pointerEvents = 'none';
+  }
+}
+
+document.getElementById('repo-input').addEventListener('input', () => {
+  updateHFLink(document.getElementById('repo-input').value.trim());
+});
+
 async function browseRepo() {
   const repoId = document.getElementById('repo-input').value.trim();
   if (!repoId) return;
@@ -221,6 +249,22 @@ async function browseRepo() {
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to fetch repo: ' + e.message);
+  }
+}
+
+async function browseLocalPath(path, label) {
+  clearErr('repo-error');
+  setRepoInput(label || path);
+  const results = document.getElementById('repo-results');
+  results.innerHTML = '<p class="msg-loading">Loading local files…</p>';
+  try {
+    const resp = await fetch('/api/local-files?id=' + encodeURIComponent(path));
+    if (!resp.ok) throw new Error(await resp.text());
+    const info = await resp.json();
+    renderRepoInfo(path, info);
+  } catch (e) {
+    results.innerHTML = '';
+    showErr('repo-error', 'Failed to load: ' + e.message);
   }
 }
 
@@ -245,10 +289,14 @@ function quantBitDepth(displayName) {
   return m ? parseInt(m[1]) : 999;
 }
 
-// isPresentFile checks if a HF filename is already on disk. For subdirectory
-// quants (filename has "/"), a match is found if any present path shares the dir.
+// isPresentFile checks if a HF filename is already on disk.
+// presentFiles contains local relative paths. Matching order:
+// 1. Exact path match
+// 2. Subdir quant: any present file shares the same directory prefix
+// 3. Basename fallback: for files moved to a different subdir during migration
 function isPresentFile(filename, presentFiles) {
   if (!filename || !presentFiles) return false;
+  if (presentFiles.has(filename)) return true;
   const slash = filename.indexOf('/');
   if (slash >= 0) {
     const dir = filename.slice(0, slash + 1);
@@ -257,17 +305,24 @@ function isPresentFile(filename, presentFiles) {
     }
     return false;
   }
-  return presentFiles.has(filename);
+  // Basename fallback for misplaced files (e.g. old Q8_0/file.gguf vs flat file.gguf).
+  const base = filename.split('/').pop();
+  for (const p of presentFiles) {
+    if (p.split('/').pop() === base) return true;
+  }
+  return false;
 }
 
 function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
   const sidecars = info.sidecars || [];
+  const rogueFiles = info.rogueFiles || [];
   const presentFiles = new Set(info.presentFiles || []);
 
-  if (!files.length && !sidecars.length) {
-    results.innerHTML = '<p class="msg-empty">No GGUF files found in this repo.</p>';
+  if (!files.length && !sidecars.length && !rogueFiles.length) {
+    results.innerHTML = '<p class="msg-empty">' +
+      (info.localOnly ? 'No files found in this directory.' : 'No GGUF files found in this repo.') + '</p>';
     return;
   }
   results.innerHTML = '';
@@ -298,6 +353,7 @@ function renderRepoInfo(repoId, info) {
 
   const quantCbs = [];
   const sidecarCbs = [];
+  const rogueCbs = [];
 
   if (files.length) {
     const quantHdr = document.createElement('div');
@@ -431,6 +487,50 @@ function renderRepoInfo(repoId, info) {
     results.appendChild(companionEl);
   }
 
+  // Rogue / local-only files section
+  if (rogueFiles.length > 0) {
+    const rogueHdr = document.createElement('div');
+    rogueHdr.className = 'subsection-header';
+    const rogueLabel = info.localOnly ? 'Local files' : 'Unrecognized local files';
+    const rogueTitle = info.localOnly
+      ? 'Files on disk (not on HuggingFace)'
+      : 'These files exist locally but were not found in the HuggingFace listing';
+    rogueHdr.innerHTML =
+      `<span class="subsection-label" title="${esc(rogueTitle)}">${esc(rogueLabel)}</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    results.appendChild(rogueHdr);
+    const [selAllR, deselAllR] = rogueHdr.querySelectorAll('.btn-link');
+
+    const rogueWrap = document.createElement('div');
+    rogueWrap.className = 'sidecars-wrap';
+    rogueFiles.forEach(localPath => {
+      const row = document.createElement('div');
+      row.className = 'sidecar-row' + (info.localOnly ? '' : ' rogue-row');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'sidecar-cb';
+      cb.dataset.localPath = localPath;
+      cb.checked = true; // always present on disk
+      cb.addEventListener('change', refreshDlBtn);
+      rogueCbs.push(cb);
+
+      row.appendChild(cb);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = info.localOnly ? 'sidecar-name' : 'sidecar-name rogue-name';
+      nameSpan.textContent = localPath;
+      row.appendChild(nameSpan);
+      rogueWrap.appendChild(row);
+    });
+    results.appendChild(rogueWrap);
+
+    selAllR.addEventListener('click',   () => { rogueCbs.forEach(cb => { cb.checked = true;  }); refreshDlBtn(); });
+    deselAllR.addEventListener('click', () => { rogueCbs.forEach(cb => { cb.checked = false; }); refreshDlBtn(); });
+  }
+
   // Download / Save action row
   const dlRow = document.createElement('div');
   dlRow.className = 'dl-action-row';
@@ -455,6 +555,9 @@ function renderRepoInfo(repoId, info) {
       ...sidecarCbs
         .filter(cb => !cb.checked && isPresentFile(sidecars[+cb.dataset.idx].filename, presentFiles))
         .map(cb => sidecars[+cb.dataset.idx].filename),
+      ...rogueCbs
+        .filter(cb => !cb.checked)
+        .map(cb => cb.dataset.localPath),
     ];
     return { toDl, toDlSidecars, toDel };
   }

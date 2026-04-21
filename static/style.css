@@ -419,14 +419,14 @@ html.light .sidecar-size { color: #94a3b8; }
   white-space: nowrap; flex-shrink: 0;
 }
 #cancel-dl-btn:hover { background: #991b1b; }
-/* ── Repo ID in model card ───────────────────────────────────────────────── */
-.model-repo-id {
-  font-size: 0.72rem; font-family: 'Menlo', 'Consolas', monospace;
-  color: #475569; user-select: text; cursor: text; word-break: break-all;
-}
-.model-repo-unknown { color: #334155; font-style: italic; font-family: inherit; }
-html.light .model-repo-id { color: #94a3b8; }
-html.light .model-repo-unknown { color: #cbd5e1; }
+/* ── Model card title ────────────────────────────────────────────────────── */
+.model-name { font-size: 0.875rem; font-weight: 600; color: #f1f5f9; word-break: break-all; }
+.model-name-unknown { color: #64748b; font-weight: 400; }
+html.light .model-name { color: #1e293b; }
+html.light .model-name-unknown { color: #94a3b8; }
+/* ── Rogue / unrecognized local files ────────────────────────────────────── */
+.rogue-row .rogue-name { color: #f87171; }
+html.light .rogue-row .rogue-name { color: #dc2626; }
 /* ── Tags row ────────────────────────────────────────────────────────────── */
 .tags-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .badge-tag { background: #1e293b; color: #64748b; border: 1px solid #334155; font-weight: 400; }

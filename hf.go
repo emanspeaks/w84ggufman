@@ -23,6 +23,8 @@ type HFRepoInfo struct {
 	PipelineTag  string   `json:"pipelineTag,omitempty"`
 	Tags         []string `json:"tags,omitempty"`
 	PresentFiles []string `json:"presentFiles"`
+	RogueFiles   []string `json:"rogueFiles,omitempty"` // local files not matching any HF file
+	LocalOnly    bool     `json:"localOnly,omitempty"`  // true when no HF repo; all files are local
 }
 
 type hfModelResponse struct {

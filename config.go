@@ -18,6 +18,7 @@ type Config struct {
 	PresetGlobal    map[string]string `json:"presetGlobal"`
 	LlamaSwapConfig          string            `json:"llamaSwapConfig"`          // path to llama-swap config.yaml; empty = disabled
 	ForceRestartOnLlamaSwap  bool              `json:"forceRestartOnLlamaSwap"`  // restart service even when llama-swap hot-reload is active
+	ShowDotFiles             bool              `json:"showDotFiles"`             // show dot/hidden dirs as model cards (default false)
 }
 
 func defaultConfig() Config {
