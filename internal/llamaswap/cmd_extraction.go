@@ -4,8 +4,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 func extractCmdPaths(cmd string, flags ...string) []string {
@@ -94,45 +92,4 @@ func llmTTL(name string) int {
 		return 600
 	}
 	return 0
-}
-
-// buildDefaultGroup returns a new group mapping node with the correct swap /
-// exclusive defaults for the group type.
-func buildDefaultGroup(sd bool) *yaml.Node {
-	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	swapVal := "false"
-	if sd {
-		swapVal = "true"
-	}
-	mappingSet(node, "swap", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: swapVal})
-	mappingSet(node, "exclusive", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
-	mappingSet(node, "members", &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"})
-	return node
-}
-
-// newEmptyDoc returns a document node with the default llama-swap global settings.
-func newEmptyDoc() *yaml.Node {
-	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	intNode := func(v int) *yaml.Node {
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(v)}
-	}
-	strNode := func(v string) *yaml.Node {
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v}
-	}
-	boolNode := func(v bool) *yaml.Node {
-		val := "false"
-		if v {
-			val = "true"
-		}
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: val}
-	}
-	mappingSet(root, "healthCheckTimeout", intNode(300))
-	mappingSet(root, "logLevel", strNode("info"))
-	mappingSet(root, "startPort", intNode(5901))
-	mappingSet(root, "logToStdout", strNode("both"))
-	mappingSet(root, "globalTTL", intNode(600))
-	mappingSet(root, "sendLoadingState", boolNode(true))
-	doc := &yaml.Node{Kind: yaml.DocumentNode}
-	doc.Content = []*yaml.Node{root}
-	return doc
 }

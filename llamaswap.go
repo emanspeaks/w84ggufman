@@ -13,6 +13,10 @@ import (
 // llamaSwapManager manages the llama-swap config.yaml file in parallel with
 // models.ini. The models.ini code is preserved so the setup can be reverted;
 // this manager is only active when LlamaSwapConfig is set in the config.
+//
+// All mutations are line-based edits that touch only the target block,
+// preserving comments, scalar styles, key ordering, and surrounding
+// whitespace. See internal/llamaswap/config_ops.go.
 type llamaSwapManager struct {
 	path string
 }
@@ -32,13 +36,7 @@ func newLlamaSwapManager(cfg Config) *llamaSwapManager {
 // (ae.safetensors) for Stable Diffusion models. mmprojPath is the vision
 // projector for multimodal LLMs.
 func (m *llamaSwapManager) AddModel(name, modelPath, mmprojPath, vaePath, modelType string) error {
-	tpl := m.LoadTemplates()
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return err
-	}
-	llamaswap.AddModel(doc, name, modelPath, mmprojPath, vaePath, modelType, tpl)
-	return llamaswap.WriteFile(m.path, doc)
+	return llamaswap.AddOrReplaceModelInFile(m.path, name, modelPath, mmprojPath, vaePath, modelType, m.LoadTemplates())
 }
 
 // templatesPath returns the path to the JSON templates file stored alongside
@@ -82,73 +80,30 @@ func (m *llamaSwapManager) UpdateTemplatesFromJSON(r io.Reader) error {
 // RemoveModel removes a model entry from config.yaml and from all group
 // member lists.
 func (m *llamaSwapManager) RemoveModel(name string) error {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return err
-	}
-	llamaswap.RemoveModel(doc, name)
-	return llamaswap.WriteFile(m.path, doc)
+	return llamaswap.RemoveModelFromFile(m.path, name)
 }
 
 // HasModel reports whether the named model is registered in config.yaml.
 func (m *llamaSwapManager) HasModel(name string) (bool, error) {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return false, err
-	}
-	return llamaswap.HasModel(doc, name), nil
+	return llamaswap.HasModelInFile(m.path, name)
 }
 
-// ReadRaw returns the YAML block for a single model entry, suitable for
-// display in a text editor.
+// ReadRaw returns the body of the named model entry as it appears in the
+// file, suitable for display in a text editor.
 func (m *llamaSwapManager) ReadRaw(name string) (string, error) {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return "", err
-	}
-	return llamaswap.ReadModelRaw(doc, name)
+	return llamaswap.ReadModelRawFromFile(m.path, name)
 }
 
-// WriteRaw parses body as a YAML mapping and replaces the named model's entry
-// in config.yaml.
+// WriteRaw replaces the body of the named model entry with the supplied
+// text, leaving the rest of the file untouched.
 func (m *llamaSwapManager) WriteRaw(name, body string) error {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return err
-	}
-	if err := llamaswap.WriteModelRaw(doc, name, body); err != nil {
-		return err
-	}
-	return llamaswap.WriteFile(m.path, doc)
+	return llamaswap.WriteModelRawToFile(m.path, name, body)
 }
 
 // ListModels returns all model entries in config.yaml with their cmd-extracted paths.
 func (m *llamaSwapManager) ListModels() ([]llamaswap.ModelEntry, error) {
-	doc, err := llamaswap.LoadFile(m.path)
-	if err != nil {
-		return nil, err
-	}
-	return llamaswap.ListModels(doc), nil
+	return llamaswap.ListModelsFromFile(m.path)
 }
-
-// // ListGroups returns all groups in config.yaml annotated with membership for modelName.
-// func (m *llamaSwapManager) ListGroups(modelName string) ([]llamaswap.GroupInfo, error) {
-// 	doc, err := llamaswap.LoadFile(m.path)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return llamaswap.ListGroups(doc, modelName), nil
-// }
-
-// // SetGroupMembership updates group membership for modelName and saves the file.
-// func (m *llamaSwapManager) SetGroupMembership(modelName string, groupNames []string) error {
-// 	doc, err := llamaswap.LoadFile(m.path)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	llamaswap.SetGroupMembership(doc, modelName, groupNames)
-// 	return llamaswap.WriteFile(m.path, doc)
-// }
 
 // ReadAll returns the full contents of config.yaml as a string.
 func (m *llamaSwapManager) ReadAll() (string, error) {

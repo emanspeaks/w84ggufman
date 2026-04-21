@@ -9,7 +9,8 @@
       "Read(//c/scratch/git/nixos-cfg/moss/services/w84ggufman.nix)",
       "Bash(go build *)",
       "Read(//c/Program Files/Go/bin/**)",
-      "Bash(GOOS=linux \"/c/Program Files/Go/bin/go\" vet ./...)"
+      "Bash(GOOS=linux \"/c/Program Files/Go/bin/go\" vet ./...)",
+      "Bash(GOOS=linux \"/c/Program Files/Go/bin/go\" test ./internal/llamaswap/...)"
     ]
   }
 }
