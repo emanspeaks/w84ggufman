@@ -175,6 +175,73 @@ func isIgnoredEntry(name string, patterns []string, showDotFiles, isDir bool) bo
 	return ignored
 }
 
+func effectiveRootIgnorePatterns(cfg Config) []string {
+	patterns := cfg.RootIgnorePatterns
+	if len(patterns) == 0 {
+		patterns = defaultIgnorePatterns
+	}
+	return patterns
+}
+
+// isIgnoredAbsolutePath evaluates ignore rules for an absolute path under
+// modelsDir, merging ignore patterns recursively from modelsDir downward.
+// Deeper directories append rules and can override parents with negation.
+func isIgnoredAbsolutePath(path string, cfg Config, dirIgnoreCache map[string][]string) bool {
+	modelsRoot := filepath.Clean(cfg.ModelsDir)
+	cleanPath := filepath.Clean(path)
+	sep := string(filepath.Separator)
+	if cleanPath != modelsRoot && !strings.HasPrefix(cleanPath, modelsRoot+sep) {
+		return false
+	}
+
+	rel, err := filepath.Rel(modelsRoot, cleanPath)
+	if err != nil || rel == "." {
+		return false
+	}
+
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	patterns := append([]string(nil), effectiveRootIgnorePatterns(cfg)...)
+	curDir := modelsRoot
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		if i > 0 {
+			if cached, ok := dirIgnoreCache[curDir]; ok {
+				patterns = append(patterns, cached...)
+			} else {
+				meta := readModelMeta(curDir)
+				dirIgnoreCache[curDir] = append([]string(nil), meta.Ignore...)
+				patterns = append(patterns, meta.Ignore...)
+			}
+		}
+		isDir := i < len(parts)-1
+		if isIgnoredEntry(p, patterns, cfg.ShowDotFiles, isDir) {
+			return true
+		}
+		if isDir {
+			curDir = filepath.Join(curDir, filepath.FromSlash(p))
+		}
+	}
+	return false
+}
+
+func filterIgnoredRelativeFiles(baseDir string, files []string, cfg Config) []string {
+	if len(files) == 0 {
+		return files
+	}
+	filtered := make([]string, 0, len(files))
+	dirIgnoreCache := make(map[string][]string)
+	for _, f := range files {
+		absPath := filepath.Join(baseDir, filepath.FromSlash(f))
+		if isIgnoredAbsolutePath(absPath, cfg, dirIgnoreCache) {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
+}
+
 // scanFilesRelative returns all regular files under dir as forward-slash
 // relative paths (skipping the w84ggufman metadata file), together with
 // the total size in bytes.
@@ -264,10 +331,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		return aliases
 	}
 
-	ignorePatterns := s.cfg.RootIgnorePatterns
-	if len(ignorePatterns) == 0 {
-		ignorePatterns = defaultIgnorePatterns
-	}
+	ignorePatterns := effectiveRootIgnorePatterns(s.cfg)
 
 	models := make([]localModel, 0)
 	entries, _ := os.ReadDir(s.cfg.ModelsDir)
@@ -601,6 +665,7 @@ func (s *server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	repoDir := filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(repoID))
 	localFiles, _ := scanFilesRelative(repoDir)
+	localFiles = filterIgnoredRelativeFiles(repoDir, localFiles, s.cfg)
 	repoInfo.PresentFiles, repoInfo.RogueFiles = matchLocalToHF(localFiles, repoInfo)
 	writeJSON(w, repoInfo)
 }
@@ -663,6 +728,7 @@ func (s *server) handleLocalFiles(w http.ResponseWriter, r *http.Request) {
 		repoDir = filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(id))
 	}
 	files, _ := scanFilesRelative(repoDir)
+	files = filterIgnoredRelativeFiles(repoDir, files, s.cfg)
 	writeJSON(w, &HFRepoInfo{
 		LocalOnly:  true,
 		RogueFiles: files,

@@ -130,8 +130,13 @@ Any model directory can contain an optional `.w84ggufman.json` file with
 metadata used by w84ggufman. For downloaded repos, it is created automatically.
 
 When this file is placed at the **modelsDir root**, its `ignore` list controls
-top-level directory filtering for UI listing and startup migration/reorg scans.
-If `ignore` is not set at root, built-in defaults are used.
+default ignore behavior (falls back to built-in defaults when omitted).
+
+Ignore evaluation is recursive and inherited: rules from `modelsDir` apply
+throughout the tree, and each nested directory may add its own `ignore` list in
+its local `.w84ggufman.json`. Nested rules are appended after parent rules, so
+they supplement parent filters and can override them with negation patterns.
+This applies to UI file/repo views and startup migration/reorganization scans.
 
 ```jsonc
 {
@@ -145,7 +150,8 @@ If `ignore` is not set at root, built-in defaults are used.
   "skip_hf_sync": true,
 
   // Optional gitignore-style patterns for entries within this directory.
-  // At modelsDir root, this list overrides top-level default ignore patterns.
+  // Root-level patterns establish defaults; nested directories can add/override
+  // inherited behavior (including with !negation patterns).
   "ignore": [
     ".cache/",
     ".w84ggufman*",
