@@ -264,9 +264,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		return aliases
 	}
 
-	// Determine active ignore patterns: check for .w84ggufman.json at modelsDir root.
-	rootMeta := readModelMeta(s.cfg.ModelsDir)
-	ignorePatterns := rootMeta.Ignore
+	ignorePatterns := s.cfg.RootIgnorePatterns
 	if len(ignorePatterns) == 0 {
 		ignorePatterns = defaultIgnorePatterns
 	}

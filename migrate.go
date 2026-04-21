@@ -12,6 +12,11 @@ import (
 // reorganize files within the new repo dir to match the HF layout, and patches
 // config file path references.
 func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
+	ignorePatterns := cfg.RootIgnorePatterns
+	if len(ignorePatterns) == 0 {
+		ignorePatterns = defaultIgnorePatterns
+	}
+
 	entries, err := os.ReadDir(cfg.ModelsDir)
 	if err != nil {
 		log.Printf("migrate: could not read models dir: %v", err)
@@ -20,6 +25,9 @@ func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if isIgnoredEntry(entry.Name(), ignorePatterns, cfg.ShowDotFiles, entry.IsDir()) {
 			continue
 		}
 		dirPath := filepath.Join(cfg.ModelsDir, entry.Name())
@@ -99,12 +107,20 @@ func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
 // a network failure). It retries reorganization on each startup until all
 // files are in their correct HF locations.
 func reorganizeExistingLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
+	ignorePatterns := cfg.RootIgnorePatterns
+	if len(ignorePatterns) == 0 {
+		ignorePatterns = defaultIgnorePatterns
+	}
+
 	entries, err := os.ReadDir(cfg.ModelsDir)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if isIgnoredEntry(entry.Name(), ignorePatterns, cfg.ShowDotFiles, entry.IsDir()) {
 			continue
 		}
 		orgDir := filepath.Join(cfg.ModelsDir, entry.Name())
