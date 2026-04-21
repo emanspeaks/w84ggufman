@@ -10,9 +10,12 @@ A self-contained Go web application for managing GGUF model files used by a
   quantizations via checkboxes, and stream the download in real time
 - **Incremental sync** — already-downloaded files are pre-checked; uncheck a file
   to delete it, check a new one to download it, then hit **Download / Save**
+- **Model card panel** — render the repo README alongside quant selection
 - **View local models** as repo-level cards with total size, file count, and
   loaded/unloaded status (cross-referenced against `/v1/models` on your llama-server)
-- **Delete repos** from the Local Models panel with a single button
+- **Delete repos and local-only files** directly from the UI
+- **Built-in editors** for `models.ini` or `config.yaml` (llama-swap mode), plus
+  llama-swap command templates
 - **Manually restart** the llama-server from the UI at any time
 - Single binary with an embedded frontend — no separate build step, no Node.js
 
@@ -100,25 +103,54 @@ pass it with `--config`:
   // addition to models.ini) whenever a model is downloaded or deleted.
   // llama-swap reloads the file automatically — no restart needed.
   // Leave empty (the default) to disable llama-swap config management.
-  "llamaSwapConfig": "/ai/llama-swap/config.yaml"
+  "llamaSwapConfig": "/ai/llama-swap/config.yaml",
+
+  // When llamaSwapConfig is enabled, do not restart llamaService after
+  // model edits by default (hot-reload already applies). Set true to force
+  // service restarts anyway.
+  "forceRestartOnLlamaSwap": false,
+
+  // Show dot/hidden directories as model cards in the Local Models view.
+  // Default: false.
+  "showDotFiles": false,
+
+  // Optional default keys shown in preset/global settings (models.ini [*]).
+  "presetGlobal": {
+    "ctx-size": "65536",
+    "flash-attn": "on",
+    "jinja": "true",
+    "n-gpu-layers": "999"
+  }
 }
 ```
 
-### Per-repo metadata: `.w84ggufman.json`
+### Per-directory metadata: `.w84ggufman.json`
 
-Each repo directory can contain an optional `.w84ggufman.json` file that stores
-metadata used by w84ggufman. It is created automatically for downloaded models.
+Any model directory can contain an optional `.w84ggufman.json` file with
+metadata used by w84ggufman. For downloaded repos, it is created automatically.
+
+When this file is placed at the **modelsDir root**, its `ignore` list controls
+top-level directory filtering for UI listing and startup migration/reorg scans.
+If `ignore` is not set at root, built-in defaults are used.
 
 ```jsonc
 {
   // HuggingFace repo ID this directory was downloaded from, e.g. "bartowski/Llama-3-GGUF"
-  "repo_id": "bartowski/Llama-3-GGUF",
+  "repoId": "bartowski/Llama-3-GGUF",
 
   // When true, this directory is treated as a purely local model:
   //   - It will NOT be migrated to the org/repo/ layout on startup
   //   - It appears with a "local" badge in the UI instead of a repo link
   //   - Clicking the card does not open the HuggingFace browser
-  "skip_hf_sync": true
+  "skip_hf_sync": true,
+
+  // Optional gitignore-style patterns for entries within this directory.
+  // At modelsDir root, this list overrides top-level default ignore patterns.
+  "ignore": [
+    ".cache/",
+    ".w84ggufman*",
+    ".hf-cache/"
+  ]
 }
 ```
 
@@ -280,6 +312,35 @@ Add w84ggufman as a flake input and import the NixOS module:
 > [sops-nix](https://github.com/Mic92/sops-nix), or set `HF_TOKEN` in your
 > service environment from a secrets file.
 
+### Nix module options (`services.w84ggufman`)
+
+The NixOS module currently exposes these options:
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enable` | bool | `false` | Enable the service/module |
+| `package` | package | none | Required when `enable = true` |
+| `port` | port | `9293` | UI listen port |
+| `modelsDir` | string | `/var/lib/llama-models` | Model storage root |
+| `hfHome` | string | `${modelsDir}/.hf-cache` | `HF_HOME` location; created by tmpfiles |
+| `llamaServerURL` | string | `http://localhost:9292` | llama-server base URL |
+| `llamaService` | string | `llama-cpp.service` | systemd unit restarted by UI actions |
+| `selfService` | string | `w84ggufman.service` | Unit used by “Restart w84ggufman”; set `""` to disable |
+| `hfToken` | string | `""` | Optional HuggingFace token |
+| `warnDownloadGiB` | float | `10.0` | Download size warning threshold |
+| `vramGiB` | float | `0.0` | VRAM/unified memory override (`0` = auto-detect) |
+| `warnVramPercent` | float | `80.0` | VRAM warning threshold percent |
+| `llamaSwapConfig` | string | `""` | Path to llama-swap `config.yaml`; empty disables integration |
+| `serviceUser` | string | `w84ggufman` | User running the service |
+| `serviceGroup` | string | `llm` | Group running the service |
+| `llamaServiceUser` | null or string | `null` | If set, forces `llamaService` unit `User=` (useful for AMD fdinfo visibility) |
+
+#### Options available in app config but not currently exposed by the Nix module
+
+The app supports additional JSON config keys such as `forceRestartOnLlamaSwap`,
+`showDotFiles`, and `presetGlobal`. The current Nix module-generated config
+does not expose those knobs directly as module options.
+
 ### configuration.nix additions
 
 The module creates the `w84ggufman` system user automatically, but you need
@@ -312,6 +373,7 @@ so you do **not** need a tmpfiles rule for it.
 | Thing | How |
 | --- | --- |
 | `w84ggufman` system user | `users.users.w84ggufman` with `isSystemUser = true` |
+| Network startup ordering | Service is ordered after `network-online.target` |
 | `HF_HOME` | Set to `${modelsDir}/.hf-cache` so `hf` never tries to write to `/.cache` |
 | `.hf-cache` directory | Created via `systemd.tmpfiles` owned by the service user |
 | polkit rule | Allows service user to restart `llamaService` and `selfService` via D-Bus without root |
@@ -349,6 +411,10 @@ gomod2nix generate
 | `GET` | `/api/status` | App state: llama reachability, download in progress, disk/VRAM |
 | `POST` | `/api/restart` | Restart the configured llama service via D-Bus |
 | `POST` | `/api/restart-self` | Restart the w84ggufman service itself via D-Bus |
+| `GET` | `/api/local-files?id={owner/repo\|path}` | List local files for a repo/path (local-only view) |
+| `GET` | `/api/preset` | Get parsed `models.ini` (global + section key/value view) |
+| `POST` | `/api/preset/global` | Update keys in `models.ini` global (`[*]`) section |
+| `POST` | `/api/preset/{name}` | Upsert keys in a model section of `models.ini` |
 | `GET` | `/api/preset/config` | Get full `models.ini` text |
 | `PUT` | `/api/preset/config` | Replace full `models.ini` text |
 | `GET` | `/api/preset/raw/{name}` | Get the raw INI block for a model |
@@ -357,6 +423,8 @@ gomod2nix generate
 | `PUT` | `/api/llamaswap/config` | Replace full `config.yaml` text |
 | `GET` | `/api/llamaswap/templates` | Get llama-swap command templates |
 | `PUT` | `/api/llamaswap/templates` | Update llama-swap command templates |
+| `GET` | `/api/llamaswap/raw/{name}` | Get raw YAML for a single llama-swap model entry |
+| `PUT` | `/api/llamaswap/raw/{name}` | Replace raw YAML for a single llama-swap model entry |
 
 ## Building
 
