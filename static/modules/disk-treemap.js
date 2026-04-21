@@ -33,6 +33,7 @@ export async function openDiskTreemap() {
       <span class="dtm-controls">
         <label class="dtm-check"><input type="checkbox" id="dtm-show-system" checked> System</label>
         <label class="dtm-check"><input type="checkbox" id="dtm-show-free" checked> Free</label>
+        <label class="dtm-check"><input type="checkbox" id="dtm-equal-display"> Equal sizes</label>
       </span>
       <span class="dtm-legend"></span>
     </div>
@@ -56,6 +57,7 @@ export async function openDiskTreemap() {
     data,
     showSystem: true,
     showFree: true,
+    equalDisplay: false,
     dirElMap: new Map(),
     hoverPathEl,
   };
@@ -83,6 +85,10 @@ export async function openDiskTreemap() {
   });
   dialogEl.querySelector('#dtm-show-free').addEventListener('change', e => {
     state.showFree = e.target.checked;
+    render();
+  });
+  dialogEl.querySelector('#dtm-equal-display').addEventListener('change', e => {
+    state.equalDisplay = e.target.checked;
     render();
   });
 
@@ -136,8 +142,9 @@ function buildTree(data) {
   }
 
   function calcSize(node) {
-    if (node.kind === 'file') return node.size;
+    if (node.kind === 'file') { node.layoutWeight = 1; return node.size; }
     node.size = node.children.reduce((s, c) => s + calcSize(c), 0);
+    node.layoutWeight = node.children.reduce((s, c) => s + c.layoutWeight, 0);
     return node.size;
   }
   calcSize(modelsRoot);
@@ -203,49 +210,79 @@ function renderSolidBlock(container, kind, name, size, x, y, w, h, state) {
 function layoutChildren(container, children, x, y, w, h, state) {
   const items = children.filter(c => c.size > 0);
   if (!items.length || w < 2 || h < 2) return;
-  const total = items.reduce((s, c) => s + c.size, 0);
-  if (total <= 0) return;
-  binaryLayout(container, items, 0, items.length, total, x, y, x + w, y + h, state);
+  if (state.equalDisplay) {
+    const wrappers = [...items]
+      .sort((a, b) => b.layoutWeight - a.layoutWeight)
+      .map(c => ({ orig: c, size: c.layoutWeight }));
+    const total = wrappers.reduce((s, c) => s + c.size, 0);
+    if (total <= 0) return;
+    const scale = (w * h) / total;
+    for (const r of squarify(wrappers, scale, x, y, w, h)) {
+      renderNode(container, r.node.orig, r.x, r.y, r.w, r.h, state);
+    }
+  } else {
+    const total = items.reduce((s, c) => s + c.size, 0);
+    if (total <= 0) return;
+    const scale = (w * h) / total;
+    for (const r of squarify(items, scale, x, y, w, h)) {
+      renderNode(container, r.node, r.x, r.y, r.w, r.h, state);
+    }
+  }
 }
 
-// Recursive binary-partition treemap — divides items into two size-balanced
-// halves and cuts along the longer axis, producing normalized aspect ratios.
-function binaryLayout(container, nodes, i, j, valueSum, x0, y0, x1, y1, state) {
-  if (i >= j) return;
-  const w = x1 - x0, h = y1 - y0;
-  if (w < 2 || h < 2) return;
-
-  if (j - i === 1) {
-    renderNode(container, nodes[i], x0, y0, w, h, state);
-    return;
+// Squarified treemap (Bruls, Huijsen, van Wijk) — groups items into strips
+// that minimise the worst aspect ratio, giving better results than binary
+// partition when item sizes vary greatly.
+function squarify(nodes, scale, x, y, w, h) {
+  const results = [];
+  const rect = { x, y, w, h };
+  let i = 0;
+  while (i < nodes.length) {
+    const shorter = Math.min(rect.w, rect.h);
+    if (shorter <= 0) break;
+    const row = [nodes[i].size * scale];
+    const rowN = [nodes[i]];
+    let best = worstAR(row, shorter);
+    let j = i + 1;
+    while (j < nodes.length) {
+      const next = nodes[j].size * scale;
+      row.push(next);
+      const cand = worstAR(row, shorter);
+      if (cand > best) { row.pop(); break; }
+      rowN.push(nodes[j]);
+      best = cand;
+      j++;
+    }
+    const sum = row.reduce((s, v) => s + v, 0);
+    if (sum <= 0) { i = j; continue; }
+    if (rect.w >= rect.h) {
+      const cw = sum / rect.h;
+      let yy = rect.y;
+      for (let k = 0; k < row.length; k++) {
+        results.push({ node: rowN[k], x: rect.x, y: yy, w: cw, h: row[k] / cw });
+        yy += row[k] / cw;
+      }
+      rect.x += cw; rect.w -= cw;
+    } else {
+      const rh = sum / rect.w;
+      let xx = rect.x;
+      for (let k = 0; k < row.length; k++) {
+        results.push({ node: rowN[k], x: xx, y: rect.y, w: row[k] / rh, h: rh });
+        xx += row[k] / rh;
+      }
+      rect.y += rh; rect.h -= rh;
+    }
+    i = j;
   }
+  return results;
+}
 
-  // Find the split index k where the left group's total size is closest to half.
-  const halfValue = valueSum / 2;
-  let k = i + 1;
-  let acc = nodes[i].size;
-  while (k < j - 1 && acc + nodes[k].size <= halfValue) {
-    acc += nodes[k].size;
-    k++;
-  }
-  // Include one more item if it brings us closer to the target half.
-  if (k < j - 1 && Math.abs(acc + nodes[k].size - halfValue) < Math.abs(acc - halfValue)) {
-    acc += nodes[k].size;
-    k++;
-  }
-
-  const leftValue = acc;
-  const rightValue = valueSum - leftValue;
-
-  if (w >= h) {
-    const xk = x0 + w * leftValue / valueSum;
-    binaryLayout(container, nodes, i, k, leftValue, x0, y0, xk, y1, state);
-    binaryLayout(container, nodes, k, j, rightValue, xk, y0, x1, y1, state);
-  } else {
-    const yk = y0 + h * leftValue / valueSum;
-    binaryLayout(container, nodes, i, k, leftValue, x0, y0, x1, yk, state);
-    binaryLayout(container, nodes, k, j, rightValue, x0, yk, x1, y1, state);
-  }
+function worstAR(row, shorter) {
+  let rmax = -Infinity, rmin = Infinity, sum = 0;
+  for (const v of row) { if (v > rmax) rmax = v; if (v < rmin) rmin = v; sum += v; }
+  if (sum <= 0 || shorter <= 0) return Infinity;
+  const s2 = shorter * shorter, sum2 = sum * sum;
+  return Math.max((s2 * rmax) / sum2, sum2 / (s2 * rmin));
 }
 
 function renderNode(container, node, x, y, w, h, state) {
@@ -342,6 +379,23 @@ function showMenu(e, node, state) {
   removeMenu();
   menuEl = document.createElement('div');
   menuEl.className = 'dtm-menu';
+
+  const open = document.createElement('button');
+  open.className = 'dtm-menu-item';
+  open.textContent = 'Show in model editor';
+  open.addEventListener('click', ev => {
+    ev.stopPropagation();
+    removeMenu();
+    const parts = node.path.split('/');
+    parts.pop();
+    const dirRel = parts.join('/');
+    const fullPath = dirRel ? state.data.modelsDir + '/' + dirRel : state.data.modelsDir;
+    const label = dirRel || pathBasename(state.data.modelsDir);
+    closeDiskTreemap();
+    import('./repo-browser.js').then(mod => mod.browseLocalPath(fullPath, label));
+  });
+  menuEl.appendChild(open);
+
   const del = document.createElement('button');
   del.className = 'dtm-menu-item';
   del.textContent = 'Delete file…';
@@ -416,15 +470,34 @@ function buildLegend(el, tree) {
 
 function setupDrag(dlg) {
   const header = dlg.querySelector('.dtm-header');
-  let dragging = false, startX = 0, startY = 0, startL = 0, startT = 0;
+  let dragging = false, maximized = false;
+  let startX = 0, startY = 0, startL = 0, startT = 0;
+
+  function onDblClick(e) {
+    if (e.target.classList.contains('dtm-close')) return;
+    maximized = !maximized;
+    if (maximized) {
+      dlg.style.left = '0'; dlg.style.top = '0';
+      dlg.style.width = '100%'; dlg.style.height = '100%';
+      dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
+      dlg.style.transform = 'none';
+    } else {
+      dlg.style.left = '50%'; dlg.style.top = '50%';
+      dlg.style.width = ''; dlg.style.height = '';
+      dlg.style.transform = 'translate(-50%, -50%)';
+    }
+  }
+
   function onDown(e) {
     if (e.target.classList.contains('dtm-close')) return;
     dragging = true;
+    maximized = false;
     const r = dlg.getBoundingClientRect();
     startX = e.clientX; startY = e.clientY; startL = r.left; startT = r.top;
     dlg.style.left = startL + 'px'; dlg.style.top = startT + 'px';
+    dlg.style.width = ''; dlg.style.height = '';
     dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
-    dlg.style.transform = 'none';  // clear CSS centering
+    dlg.style.transform = 'none';
     e.preventDefault();
   }
   function onMove(e) {
@@ -433,10 +506,12 @@ function setupDrag(dlg) {
     dlg.style.top  = Math.max(0, Math.min(window.innerHeight - 40, startT + e.clientY - startY)) + 'px';
   }
   function onUp() { dragging = false; }
+  header.addEventListener('dblclick',  onDblClick);
   header.addEventListener('mousedown', onDown);
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup',   onUp);
   return () => {
+    header.removeEventListener('dblclick',  onDblClick);
     header.removeEventListener('mousedown', onDown);
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
