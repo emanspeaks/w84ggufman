@@ -118,9 +118,7 @@ func matchesIgnorePattern(name, pattern string, isDir bool) bool {
 	pattern = strings.TrimPrefix(pattern, "/")
 
 	// "**/name" → match at any depth; strip the prefix.
-	if strings.HasPrefix(pattern, "**/") {
-		pattern = strings.TrimPrefix(pattern, "**/")
-	}
+	pattern = strings.TrimPrefix(pattern, "**/")
 
 	// "name/**" → matches everything inside name; treat as dir-only match on name.
 	if strings.HasSuffix(pattern, "/**") {
