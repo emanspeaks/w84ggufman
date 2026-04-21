@@ -9,8 +9,7 @@
       "Read(//c/scratch/git/nixos-cfg/moss/services/w84ggufman.nix)",
       "Bash(go build *)",
       "Read(//c/Program Files/Go/bin/**)",
-      "Read(//c/Users/emanspeaks/go/bin/**)",
-      "Bash(find /c -name \"go.exe\" -maxdepth 6)"
+      "Bash(GOOS=linux \"/c/Program Files/Go/bin/go\" vet ./...)"
     ]
   }
 }

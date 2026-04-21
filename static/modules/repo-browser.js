@@ -2,7 +2,9 @@
 
 import { clearErr, showErr, esc, formatBytes } from './utils.js';
 import { setStatusBar } from './status-bar.js';
-import { renderSidecarTree, buildSidecarTree, isPresentFile } from './quant-grid.js';
+import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
+import { downloadInProgress, warnVramBytes, setRefreshDlBtnExport, startDownload } from './download.js';
+import { diskFreeBytes } from './status-polling.js';
 
 export let currentRepoContext = null;
 
@@ -124,115 +126,166 @@ function renderRepoInfo(repoId, info) {
   const sidecarCbs = [];
   const rogueCbs = [];
 
-  // Quant files section (reuse download module's refreshDlBtn)
+  // Quant files section
   if (files.length) {
-    import('./download.js').then(dlMod => {
-      const quantHdr = document.createElement('div');
-      quantHdr.className = 'subsection-header';
-      quantHdr.innerHTML =
-        `<span class="subsection-label">Quant files</span>` +
-        `<span class="select-btns">` +
-          `<button class="btn-link">Select all</button>` +
-          `<button class="btn-link">Deselect all</button>` +
-        `</span>`;
-      results.appendChild(quantHdr);
-      const [selAllQ, deselAllQ] = quantHdr.querySelectorAll('.btn-link');
+    const quantHdr = document.createElement('div');
+    quantHdr.className = 'subsection-header';
+    quantHdr.innerHTML =
+      `<span class="subsection-label">Quant files</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    results.appendChild(quantHdr);
+    const [selAllQ, deselAllQ] = quantHdr.querySelectorAll('.btn-link');
 
-      const bases = files.map(f => f.displayName ? '' : f.filename.replace(/\.gguf$/i, ''));
-      const prefix = import('./quant-grid.js').then(qMod => qMod.commonPrefix(bases.filter(Boolean)).replace(/[-_]+$/, '')).then(p => {
-        for (const f of files) {
-          const label = f.displayName || (import('./quant-grid.js').then(qMod => qMod.quantDisplayName(f.filename, p)));
-          const bits  = import('./quant-grid.js').then(qMod => qMod.quantBitDepth(label));
-          // ... rest of quant rendering
-        }
-      });
+    const bases = files.map(f => f.displayName ? '' : f.filename.replace(/\.gguf$/i, ''));
+    const prefix = commonPrefix(bases.filter(Boolean)).replace(/[-_]+$/, '');
 
-      selAllQ.addEventListener('click',   () => { quantCbs.forEach(cb => { cb.checked = true;  }); dlMod.refreshDlBtn(); });
-      deselAllQ.addEventListener('click', () => { quantCbs.forEach(cb => { cb.checked = false; }); dlMod.refreshDlBtn(); });
-    });
+    const byBit = new Map();
+    for (const f of files) {
+      const label = f.displayName || quantDisplayName(f.filename, prefix);
+      const bits  = quantBitDepth(label);
+      if (!byBit.has(bits)) byBit.set(bits, []);
+      byBit.get(bits).push({ f, label });
+    }
+    const sortedBits = [...byBit.keys()].sort((a, b) => a - b);
+
+    const grid = document.createElement('div');
+    grid.className = 'quant-grid';
+
+    for (const bits of sortedBits) {
+      const group = byBit.get(bits);
+      const row = document.createElement('div');
+      row.className = 'quant-row';
+
+      const bitLabel = document.createElement('span');
+      bitLabel.className = 'quant-bit-label';
+      bitLabel.textContent = bits === 999 ? '?' : bits + '-bit';
+      row.appendChild(bitLabel);
+
+      const tilesWrap = document.createElement('div');
+      tilesWrap.className = 'quant-tiles';
+
+      for (const { f, label } of group) {
+        const isPresent = isPresentFile(f.filename, presentFiles);
+        const tooBig   = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
+        const vramWarn = warnVramBytes > 0 && f.size != null && f.size > warnVramBytes;
+
+        const tile = document.createElement('label');
+        tile.className = 'quant-tile' +
+          (tooBig   ? ' toobig'   : '') +
+          (vramWarn ? ' vramwarn' : '') +
+          (isPresent ? ' present' : '');
+        tile.title = f.filename;
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'quant-cb';
+        cb.dataset.filename = f.filename;
+        cb.dataset.size = f.size || 0;
+        cb.checked = isPresent;
+        cb.addEventListener('change', () => refreshDlBtn());
+        quantCbs.push(cb);
+
+        tile.appendChild(cb);
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'quant-tile-name';
+        nameSpan.textContent = label;
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'quant-tile-size';
+        sizeSpan.textContent = (vramWarn ? '⚠ ' : '') + formatBytes(f.size) + (isPresent ? ' ✓' : '');
+        tile.appendChild(nameSpan);
+        tile.appendChild(sizeSpan);
+        tilesWrap.appendChild(tile);
+      }
+      row.appendChild(tilesWrap);
+      grid.appendChild(row);
+    }
+    results.appendChild(grid);
+
+    selAllQ.addEventListener('click',   () => { quantCbs.forEach(cb => { cb.checked = true;  }); refreshDlBtn(); });
+    deselAllQ.addEventListener('click', () => { quantCbs.forEach(cb => { cb.checked = false; }); refreshDlBtn(); });
   }
 
   // Sidecars section
+  let sidecarTree = null;
   if (sidecars.length > 0) {
-    import('./download.js').then(dlMod => {
-      const companionEl = document.createElement('div');
-      companionEl.className = 'companion-section';
+    const companionEl = document.createElement('div');
+    companionEl.className = 'companion-section';
 
-      const sHdr = document.createElement('div');
-      sHdr.className = 'subsection-header';
-      sHdr.innerHTML =
-        `<span class="subsection-label">Additional files</span>` +
-        `<span class="select-btns">` +
-          `<button class="btn-link">Select all</button>` +
-          `<button class="btn-link">Deselect all</button>` +
-        `</span>`;
-      companionEl.appendChild(sHdr);
-      const [selAllS, deselAllS] = sHdr.querySelectorAll('.btn-link');
+    const sHdr = document.createElement('div');
+    sHdr.className = 'subsection-header';
+    sHdr.innerHTML =
+      `<span class="subsection-label">Additional files</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    companionEl.appendChild(sHdr);
+    const [selAllS, deselAllS] = sHdr.querySelectorAll('.btn-link');
 
-      const wrap = document.createElement('div');
-      wrap.className = 'sidecars-wrap';
-      const sidecarTree = renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, dlMod.refreshDlBtn);
-      companionEl.appendChild(wrap);
+    const wrap = document.createElement('div');
+    wrap.className = 'sidecars-wrap';
+    sidecarTree = renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, () => refreshDlBtn());
+    companionEl.appendChild(wrap);
 
-      selAllS.addEventListener('click',   () => {
-        sidecarCbs.forEach(cb => { cb.checked = true; });
-        sidecarTree.updateDirStates();
-        dlMod.refreshDlBtn();
-      });
-      deselAllS.addEventListener('click', () => {
-        sidecarCbs.forEach(cb => { cb.checked = false; });
-        sidecarTree.updateDirStates();
-        dlMod.refreshDlBtn();
-      });
-
-      results.appendChild(companionEl);
+    selAllS.addEventListener('click',   () => {
+      sidecarCbs.forEach(cb => { cb.checked = true; });
+      sidecarTree.updateDirStates();
+      refreshDlBtn();
     });
+    deselAllS.addEventListener('click', () => {
+      sidecarCbs.forEach(cb => { cb.checked = false; });
+      sidecarTree.updateDirStates();
+      refreshDlBtn();
+    });
+
+    results.appendChild(companionEl);
   }
 
   // Rogue files section
   if (rogueFiles.length > 0) {
-    import('./download.js').then(dlMod => {
-      const rogueHdr = document.createElement('div');
-      rogueHdr.className = 'subsection-header';
-      const rogueLabel = info.localOnly ? 'Local files' : 'Unrecognized local files';
-      const rogueTitle = info.localOnly
-        ? 'Files on disk (not on HuggingFace)'
-        : 'These files exist locally but were not found in the HuggingFace listing';
-      rogueHdr.innerHTML =
-        `<span class="subsection-label" title="${esc(rogueTitle)}">${esc(rogueLabel)}</span>` +
-        `<span class="select-btns">` +
-          `<button class="btn-link">Select all</button>` +
-          `<button class="btn-link">Deselect all</button>` +
-        `</span>`;
-      results.appendChild(rogueHdr);
-      const [selAllR, deselAllR] = rogueHdr.querySelectorAll('.btn-link');
+    const rogueHdr = document.createElement('div');
+    rogueHdr.className = 'subsection-header';
+    const rogueLabel = info.localOnly ? 'Local files' : 'Unrecognized local files';
+    const rogueTitle = info.localOnly
+      ? 'Files on disk (not on HuggingFace)'
+      : 'These files exist locally but were not found in the HuggingFace listing';
+    rogueHdr.innerHTML =
+      `<span class="subsection-label" title="${esc(rogueTitle)}">${esc(rogueLabel)}</span>` +
+      `<span class="select-btns">` +
+        `<button class="btn-link">Select all</button>` +
+        `<button class="btn-link">Deselect all</button>` +
+      `</span>`;
+    results.appendChild(rogueHdr);
+    const [selAllR, deselAllR] = rogueHdr.querySelectorAll('.btn-link');
 
-      const rogueWrap = document.createElement('div');
-      rogueWrap.className = 'sidecars-wrap';
-      rogueFiles.forEach(localPath => {
-        const row = document.createElement('div');
-        row.className = 'sidecar-row' + (info.localOnly ? '' : ' rogue-row');
+    const rogueWrap = document.createElement('div');
+    rogueWrap.className = 'sidecars-wrap';
+    rogueFiles.forEach(localPath => {
+      const row = document.createElement('div');
+      row.className = 'sidecar-row' + (info.localOnly ? '' : ' rogue-row');
 
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'sidecar-cb';
-        cb.dataset.localPath = localPath;
-        cb.checked = true; // always present on disk
-        cb.addEventListener('change', dlMod.refreshDlBtn);
-        rogueCbs.push(cb);
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'sidecar-cb';
+      cb.dataset.localPath = localPath;
+      cb.checked = true; // always present on disk
+      cb.addEventListener('change', () => refreshDlBtn());
+      rogueCbs.push(cb);
 
-        row.appendChild(cb);
-        const nameSpan = document.createElement('span');
-        nameSpan.className = info.localOnly ? 'sidecar-name' : 'sidecar-name rogue-name';
-        nameSpan.textContent = localPath;
-        row.appendChild(nameSpan);
-        rogueWrap.appendChild(row);
-      });
-      results.appendChild(rogueWrap);
-
-      selAllR.addEventListener('click',   () => { rogueCbs.forEach(cb => { cb.checked = true;  }); dlMod.refreshDlBtn(); });
-      deselAllR.addEventListener('click', () => { rogueCbs.forEach(cb => { cb.checked = false; }); dlMod.refreshDlBtn(); });
+      row.appendChild(cb);
+      const nameSpan = document.createElement('span');
+      nameSpan.className = info.localOnly ? 'sidecar-name' : 'sidecar-name rogue-name';
+      nameSpan.textContent = localPath;
+      row.appendChild(nameSpan);
+      rogueWrap.appendChild(row);
     });
+    results.appendChild(rogueWrap);
+
+    selAllR.addEventListener('click',   () => { rogueCbs.forEach(cb => { cb.checked = true;  }); refreshDlBtn(); });
+    deselAllR.addEventListener('click', () => { rogueCbs.forEach(cb => { cb.checked = false; }); refreshDlBtn(); });
   }
 
   // Download action row
@@ -269,14 +322,17 @@ function renderRepoInfo(repoId, info) {
   function refreshDlBtn() {
     const { toDl, toDlSidecars, toDel } = getActions();
     const hasChanges = toDl.length > 0 || toDlSidecars.length > 0 || toDel.length > 0;
-    dlBtn.disabled = false || !hasChanges; // TODO: hook downloadInProgress
+    dlBtn.disabled = downloadInProgress || !hasChanges;
     const parts = [];
     if (toDl.length + toDlSidecars.length > 0)
       parts.push((toDl.length + toDlSidecars.length) + ' to download');
     if (toDel.length > 0)
       parts.push(toDel.length + ' to delete');
-    hint.textContent = parts.length ? parts.join(', ') : 'No changes';
+    hint.textContent = downloadInProgress
+      ? 'Download in progress…'
+      : (parts.length ? parts.join(', ') : 'No changes');
   }
+  setRefreshDlBtnExport(refreshDlBtn);
 
   dlBtn.addEventListener('click', async () => {
     const { toDl, toDlSidecars, toDel } = getActions();
@@ -307,7 +363,7 @@ function renderRepoInfo(repoId, info) {
         : toDlSidecars.slice(1).map(s => s.filename);
       const totalSize = toDl.reduce((s, f) => s + f.size, 0)
         + toDlSidecars.reduce((s, f) => s + (f.size || 0), 0);
-      import('./download.js').then(mod => mod.startDownload(repoId, filenames, sFiles, totalSize));
+      startDownload(repoId, filenames, sFiles, totalSize);
     } else {
       refreshDlBtn();
     }

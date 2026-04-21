@@ -1,6 +1,7 @@
 // Download handling and SSE streaming
 
-import { formatBytes, formatETA, setStatusBar } from './status-bar.js';
+import { setStatusBar } from './status-bar.js';
+import { formatBytes, formatETA } from './utils.js';
 import { isPresentFile } from './quant-grid.js';
 
 export let downloadInProgress = false;
@@ -12,6 +13,11 @@ export function setDownloadState(inProgress) {
   downloadInProgress = inProgress;
   document.getElementById('cancel-dl-btn').style.display = inProgress ? 'inline-block' : 'none';
   export_refreshDlBtn?.();
+}
+
+export function setWarnThresholds(downloadBytes, vramBytes) {
+  if (downloadBytes != null) warnDownloadBytes = downloadBytes;
+  if (vramBytes != null) warnVramBytes = vramBytes;
 }
 
 let export_refreshDlBtn = null;

@@ -2,7 +2,10 @@
 
 import { formatBytes, esc } from './utils.js';
 import { setLlamaServiceLabel } from './service-restart.js';
-import { downloadInProgress, setDownloadState, openSSE } from './download.js';
+import { downloadInProgress, setDownloadState, openSSE, setWarnThresholds } from './download.js';
+
+export let diskFreeBytes = 0;
+export let llamaSwapEnabled = false;
 
 export async function pollStatus() {
   try {
@@ -14,7 +17,6 @@ export async function pollStatus() {
       setLlamaServiceLabel(s.llamaServiceLabel);
       document.getElementById('restart-btn').textContent = 'Restart ' + s.llamaServiceLabel;
     }
-    let llamaSwapEnabled = false;
     if (s.llamaSwapEnabled != null) {
       llamaSwapEnabled = s.llamaSwapEnabled;
       document.getElementById('edit-templates-btn').style.display = llamaSwapEnabled ? '' : 'none';
@@ -26,7 +28,7 @@ export async function pollStatus() {
       if (!ver.textContent) ver.textContent = s.version;
     }
     if (s.disk && s.disk.totalBytes > 0) {
-      const diskFreeBytes = s.disk.freeBytes;
+      diskFreeBytes = s.disk.freeBytes;
       const pct = Math.round(s.disk.usedBytes / s.disk.totalBytes * 100);
       const fill = document.getElementById('disk-bar-fill');
       fill.style.width = pct + '%';
@@ -39,6 +41,7 @@ export async function pollStatus() {
       el.textContent = 'VRAM: ' + formatBytes(s.vramBytes);
       el.style.display = '';
     }
+    setWarnThresholds(s.warnDownloadBytes, s.warnVramBytes);
     // Update loaded aliases on model cards without re-rendering
     if (s.loadedModels) {
       const loadedSet = new Set(s.loadedModels);

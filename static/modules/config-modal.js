@@ -1,6 +1,7 @@
 // Config modal dialogs
 
-import { esc, setStatusBar } from './status-bar.js';
+import { setStatusBar } from './status-bar.js';
+import { esc } from './utils.js';
 import { fetchLocalModels } from './local-models.js';
 
 export async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg }) {
