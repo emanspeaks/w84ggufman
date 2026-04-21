@@ -12,10 +12,7 @@ import (
 // reorganize files within the new repo dir to match the HF layout, and patches
 // config file path references.
 func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
-	ignorePatterns := cfg.RootIgnorePatterns
-	if len(ignorePatterns) == 0 {
-		ignorePatterns = defaultIgnorePatterns
-	}
+	dirIgnoreCache := make(map[string][]string)
 
 	entries, err := os.ReadDir(cfg.ModelsDir)
 	if err != nil {
@@ -27,10 +24,10 @@ func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
 		if !entry.IsDir() {
 			continue
 		}
-		if isIgnoredEntry(entry.Name(), ignorePatterns, cfg.ShowDotFiles, entry.IsDir()) {
+		dirPath := filepath.Join(cfg.ModelsDir, entry.Name())
+		if isIgnoredAbsolutePath(dirPath, cfg, dirIgnoreCache) {
 			continue
 		}
-		dirPath := filepath.Join(cfg.ModelsDir, entry.Name())
 		if isOrgDir(dirPath) {
 			// Already new org/repo layout — skip.
 			continue
@@ -96,7 +93,7 @@ func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
 
 		// Reorganize files within the new repo dir to match HF layout.
 		existingMeta := readModelMeta(targetDir)
-		allRecognized := reorganizeRepoFiles(targetDir, repoID, cfg.HFToken, pm, lsm)
+		allRecognized := reorganizeRepoFiles(cfg, targetDir, repoID, cfg.HFToken, pm, lsm)
 		updateMetaAfterReorg(targetDir, repoID, existingMeta, allRecognized)
 	}
 }
@@ -107,10 +104,7 @@ func migrateOldLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
 // a network failure). It retries reorganization on each startup until all
 // files are in their correct HF locations.
 func reorganizeExistingLayout(cfg Config, pm *presetManager, lsm *llamaSwapManager) {
-	ignorePatterns := cfg.RootIgnorePatterns
-	if len(ignorePatterns) == 0 {
-		ignorePatterns = defaultIgnorePatterns
-	}
+	dirIgnoreCache := make(map[string][]string)
 
 	entries, err := os.ReadDir(cfg.ModelsDir)
 	if err != nil {
@@ -120,10 +114,10 @@ func reorganizeExistingLayout(cfg Config, pm *presetManager, lsm *llamaSwapManag
 		if !entry.IsDir() {
 			continue
 		}
-		if isIgnoredEntry(entry.Name(), ignorePatterns, cfg.ShowDotFiles, entry.IsDir()) {
+		orgDir := filepath.Join(cfg.ModelsDir, entry.Name())
+		if isIgnoredAbsolutePath(orgDir, cfg, dirIgnoreCache) {
 			continue
 		}
-		orgDir := filepath.Join(cfg.ModelsDir, entry.Name())
 		if !isOrgDir(orgDir) {
 			continue
 		}
@@ -133,12 +127,15 @@ func reorganizeExistingLayout(cfg Config, pm *presetManager, lsm *llamaSwapManag
 				continue
 			}
 			repoDir := filepath.Join(orgDir, repoEntry.Name())
+			if isIgnoredAbsolutePath(repoDir, cfg, dirIgnoreCache) {
+				continue
+			}
 			meta := readModelMeta(repoDir)
 			// Only process dirs that have a repoId left from a prior incomplete reorg.
 			if meta.RepoID == "" || meta.SkipHFSync {
 				continue
 			}
-			allRecognized := reorganizeRepoFiles(repoDir, meta.RepoID, cfg.HFToken, pm, lsm)
+			allRecognized := reorganizeRepoFiles(cfg, repoDir, meta.RepoID, cfg.HFToken, pm, lsm)
 			updateMetaAfterReorg(repoDir, meta.RepoID, meta, allRecognized)
 		}
 	}
@@ -147,19 +144,13 @@ func reorganizeExistingLayout(cfg Config, pm *presetManager, lsm *llamaSwapManag
 // reorganizeRepoFiles moves files within repoDir to match the HF file layout
 // for repoID. Returns true when all files were successfully matched to HF paths
 // (no unrecognized files or folders remain after filtering dot files/ignores).
-func reorganizeRepoFiles(repoDir, repoID, hfToken string, pm *presetManager, lsm *llamaSwapManager) bool {
+func reorganizeRepoFiles(cfg Config, repoDir, repoID, hfToken string, pm *presetManager, lsm *llamaSwapManager) bool {
 	info, err := fetchRepoInfo(repoID, hfToken)
 	if err != nil {
 		log.Printf("migrate: %s — cannot fetch HF info for reorganization: %v", repoID, err)
 		return false
 	}
-
-	// Effective ignore patterns for this repo dir.
-	repoMeta := readModelMeta(repoDir)
-	ignorePatterns := repoMeta.Ignore
-	if len(ignorePatterns) == 0 {
-		ignorePatterns = defaultIgnorePatterns
-	}
+	dirIgnoreCache := make(map[string][]string)
 
 	// Build lookup tables: basename → HF path, and shard-stem → HF representative path.
 	allHFFiles := append(info.Models, info.Sidecars...)
@@ -190,7 +181,7 @@ func reorganizeRepoFiles(repoDir, repoID, hfToken string, pm *presetManager, lsm
 		if err != nil {
 			return nil
 		}
-		if fi.Name() == metaFilename || isIgnoredEntry(fi.Name(), ignorePatterns, false, fi.IsDir()) {
+		if fi.Name() == metaFilename || isIgnoredAbsolutePath(path, cfg, dirIgnoreCache) {
 			if fi.IsDir() {
 				return filepath.SkipDir
 			}
