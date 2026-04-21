@@ -87,6 +87,17 @@ section {
 /* ── Buttons ─────────────────────────────────────────────────────────── */
 button { cursor: pointer; border: none; border-radius: 5px; font-size: 0.825rem; font-weight: 500; padding: 5px 12px; transition: background 0.15s; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary, .btn-secondary, .btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 0.825rem;
+  font-weight: 500;
+  text-decoration: none;
+  line-height: 1;
+}
 .btn-primary  { background: #2563eb; color: #fff; }
 .btn-primary:hover:not(:disabled)  { background: #3b82f6; }
 .btn-danger   { background: #991b1b; color: #fca5a5; }
@@ -106,6 +117,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .badge { font-size: 0.7rem; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
 .badge-loaded   { background: #14532d; color: #86efac; }
 .badge-unloaded { background: #1e293b; color: #64748b; }
+.badge-configured { background: #3f3f46; color: #d4d4d8; }
 .model-actions { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; }
 /* ── Config modal ──────────────────────────────────────────────────────── */
 .modal-backdrop {
@@ -189,14 +201,11 @@ html.light .tpl-ph-hint code { background: #f1f5f9; color: #475569; }
 .hint a:hover { color: #93c5fd; }
 .input-row { display: flex; gap: 0.5rem; margin-bottom: 0.875rem; }
 #hf-link-btn {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   text-align: center;
   white-space: normal;
-  font-size: 0.72rem;
-  line-height: 1;
+  font-size: 0.7rem;
+  height: 28px;
+  padding: 2px 8px;
 }
 .hf-two-line {
   display: block;
@@ -371,6 +380,7 @@ html.light .model-name     { color: #1e293b; }
 html.light .model-detail   { color: #94a3b8; }
 html.light .badge-loaded   { background: #dcfce7; color: #166534; }
 html.light .badge-unloaded { background: #f1f5f9; color: #94a3b8; }
+html.light .badge-configured { background: #e4e4e7; color: #52525b; }
 html.light .hint           { color: #94a3b8; }
 html.light .hint a         { color: #2563eb; }
 html.light .hint a:hover   { color: #1d4ed8; }
@@ -421,9 +431,20 @@ html.light .dl-selection-hint { color: #94a3b8; }
 .sidecars-label { font-size: 0.7rem; color: #475569; }
 .sidecar-row { display: flex; align-items: center; gap: 5px; }
 .sidecar-row input[type="checkbox"] { flex-shrink: 0; accent-color: #3b82f6; cursor: pointer; }
+.sidecar-tree-row { gap: 4px; }
+.sidecar-tree-prefix {
+  font-size: 0.72rem;
+  color: #64748b;
+  white-space: pre;
+  font-family: 'Menlo','Consolas',monospace;
+  flex-shrink: 0;
+}
+.sidecar-dir-name { color: #cbd5e1; font-weight: 600; }
 .sidecar-name { font-size: 0.75rem; font-family: monospace; color: #94a3b8; word-break: break-all; }
 .sidecar-size { font-size: 0.7rem; color: #475569; white-space: nowrap; }
 html.light .sidecars-label { color: #94a3b8; }
+html.light .sidecar-tree-prefix { color: #94a3b8; }
+html.light .sidecar-dir-name { color: #334155; }
 html.light .sidecar-name { color: #475569; }
 html.light .sidecar-size { color: #94a3b8; }
 /* ── Cancel button ───────────────────────────────────────────────────────── */
@@ -476,12 +497,12 @@ html.light .model-card.clickable:hover { border-color: #94a3b8; }
 .readme-content img { max-width: 100%; height: auto; display: block; }
 html.light .readme-content { color: #475569; }
 html.light .readme-content h1 { color: #1e293b; border-bottom-color: #e2e8f0; }
-html.light .readme-content h2,.readme-content h3 { color: #1e293b; }
+html.light .readme-content h2, html.light .readme-content h3 { color: #1e293b; }
 html.light .readme-content h4 { color: #64748b; }
 html.light .readme-content pre { background: #f8fafc; border-color: #e2e8f0; }
 html.light .readme-content code { background: #f1f5f9; color: #1e293b; }
 html.light .readme-content th { background: #f8fafc; color: #1e293b; }
-html.light .readme-content th,.readme-content td { border-color: #e2e8f0; }
+html.light .readme-content th, html.light .readme-content td { border-color: #e2e8f0; }
 html.light .readme-content a { color: #2563eb; }
 html.light .readme-content blockquote { border-left-color: #e2e8f0; color: #64748b; }
 html.light .readme-content hr { border-top-color: #e2e8f0; }
