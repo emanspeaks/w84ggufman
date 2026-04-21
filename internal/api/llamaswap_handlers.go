@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -96,4 +98,68 @@ func (s *Server) HandlePutLlamaSwapConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type addLlamaSwapModelRequest struct {
+	RepoID     string `json:"repoId"`
+	Filename   string `json:"filename"`
+	MmprojFile string `json:"mmprojFile,omitempty"`
+	VaeFile    string `json:"vaeFile,omitempty"`
+	ModelType  string `json:"modelType"`
+}
+
+type addLlamaSwapModelResponse struct {
+	Name string `json:"name"`
+}
+
+func deriveModelName(filename string) string {
+	base := filepath.Base(filename)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	return base
+}
+
+func (s *Server) HandleAddLlamaSwapModel(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusNotFound)
+		return
+	}
+	var req addLlamaSwapModelRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.RepoID == "" || req.Filename == "" {
+		http.Error(w, "repoId and filename are required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(req.RepoID, "..") || strings.Contains(req.Filename, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	if req.ModelType != "" && req.ModelType != "llm" && req.ModelType != "sd" {
+		http.Error(w, "modelType must be 'llm' or 'sd'", http.StatusBadRequest)
+		return
+	}
+
+	repoDir := filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(req.RepoID))
+	modelPath := filepath.Join(repoDir, filepath.FromSlash(req.Filename))
+	name := deriveModelName(req.Filename)
+	if name == "" {
+		http.Error(w, "could not derive model name from filename", http.StatusBadRequest)
+		return
+	}
+
+	var mmprojPath, vaePath string
+	if req.MmprojFile != "" {
+		mmprojPath = filepath.Join(repoDir, filepath.FromSlash(req.MmprojFile))
+	}
+	if req.VaeFile != "" {
+		vaePath = filepath.Join(repoDir, filepath.FromSlash(req.VaeFile))
+	}
+
+	if err := s.llamaSwap.AddModel(name, modelPath, mmprojPath, vaePath, req.ModelType); err != nil {
+		http.Error(w, "failed to add model: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, addLlamaSwapModelResponse{Name: name})
 }

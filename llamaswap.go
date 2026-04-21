@@ -27,16 +27,17 @@ func newLlamaSwapManager(cfg Config) *llamaSwapManager {
 }
 
 // AddModel adds or replaces a model entry in config.yaml and registers it in
-// the appropriate group. vaePath is the path to the VAE (ae.safetensors) for
-// Stable Diffusion models; it also serves as the signal that the model is SD.
-// mmprojPath is the vision projector for multimodal LLMs.
-func (m *llamaSwapManager) AddModel(name, modelPath, mmprojPath, vaePath string) error {
+// the appropriate group. modelType ("llm" or "sd") selects the template; if
+// empty, it is inferred from name/vaePath. vaePath is the path to the VAE
+// (ae.safetensors) for Stable Diffusion models. mmprojPath is the vision
+// projector for multimodal LLMs.
+func (m *llamaSwapManager) AddModel(name, modelPath, mmprojPath, vaePath, modelType string) error {
 	tpl := m.LoadTemplates()
 	doc, err := llamaswap.LoadFile(m.path)
 	if err != nil {
 		return err
 	}
-	llamaswap.AddModel(doc, name, modelPath, mmprojPath, vaePath, tpl)
+	llamaswap.AddModel(doc, name, modelPath, mmprojPath, vaePath, modelType, tpl)
 	return llamaswap.WriteFile(m.path, doc)
 }
 

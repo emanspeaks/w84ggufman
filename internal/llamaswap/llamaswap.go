@@ -52,10 +52,10 @@ func WriteFile(path string, doc *yaml.Node) error {
 
 // AddModel adds or replaces a model entry in the config document and registers
 // it in the appropriate group (llm or sd). vaePath is the path to ae.safetensors
-// for Stable Diffusion models; it also serves as the signal that the model is an
-// SD model. mmprojPath is the vision projector for multimodal LLMs.
-// tpl supplies the cmd template and TTL defaults.
-func AddModel(doc *yaml.Node, name, modelPath, mmprojPath, vaePath string, tpl Templates) {
+// for Stable Diffusion models. mmprojPath is the vision projector for
+// multimodal LLMs. modelType ("llm" or "sd") overrides the name/vaePath
+// heuristic when non-empty. tpl supplies the cmd template and TTL defaults.
+func AddModel(doc *yaml.Node, name, modelPath, mmprojPath, vaePath, modelType string, tpl Templates) {
 	root := rootMapping(doc)
 
 	models := mappingGet(root, "models")
@@ -64,7 +64,15 @@ func AddModel(doc *yaml.Node, name, modelPath, mmprojPath, vaePath string, tpl T
 		mappingSet(root, "models", models)
 	}
 
-	sd := isSDModel(name, vaePath)
+	var sd bool
+	switch modelType {
+	case "sd":
+		sd = true
+	case "llm":
+		sd = false
+	default:
+		sd = isSDModel(name, vaePath)
+	}
 	var cmd string
 	var ttl int
 	if sd {
@@ -98,12 +106,12 @@ func AddModel(doc *yaml.Node, name, modelPath, mmprojPath, vaePath string, tpl T
 			Value: checkEndpoint,
 		})
 	}
-	modelType := "llm"
+	mType := "llm"
 	if sd {
-		modelType = "sd"
+		mType = "sd"
 	}
 	meta := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	mappingSet(meta, "model_type", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: modelType})
+	mappingSet(meta, "model_type", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: mType})
 	mappingSet(meta, "port", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "${PORT}"})
 	mappingSet(entry, "metadata", meta)
 	mappingSet(models, name, entry)

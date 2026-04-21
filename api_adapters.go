@@ -91,6 +91,14 @@ func (a llamaSwapAdapter) RemoveModel(name string) error {
 	return a.l.RemoveModel(name)
 }
 
+func (a llamaSwapAdapter) AddModel(name, modelPath, mmprojPath, vaePath, modelType string) error {
+	return a.l.AddModel(name, modelPath, mmprojPath, vaePath, modelType)
+}
+
+func (a llamaSwapAdapter) HasModel(name string) (bool, error) {
+	return a.l.HasModel(name)
+}
+
 func (a llamaSwapAdapter) LoadTemplates() any {
 	return a.l.LoadTemplates()
 }

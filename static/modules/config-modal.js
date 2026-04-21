@@ -3,8 +3,9 @@
 import { setStatusBar } from './status-bar.js';
 import { esc } from './utils.js';
 import { fetchLocalModels } from './local-models.js';
+import { pollStatus } from './status-polling.js';
 
-export async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg }) {
+export async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg, selectName }) {
   let body = '';
   try {
     const resp = await fetch(endpoint);
@@ -48,6 +49,7 @@ export async function openRawEditModal({ title, subtitle, endpoint, placeholder,
       closeModal();
       setStatusBar('Ready', successMsg, false);
       fetchLocalModels();
+      pollStatus();
     } catch (e) {
       setStatusBar('Error', 'Save failed: ' + e.message, false);
       saveBtn.disabled = false;
@@ -57,7 +59,18 @@ export async function openRawEditModal({ title, subtitle, endpoint, placeholder,
 
   document.body.appendChild(backdrop);
   ta.focus();
-  ta.setSelectionRange(0, 0);
+  let cursorPos = 0;
+  if (selectName) {
+    const re = new RegExp('^\\s{2}' + selectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':\\s*$', 'm');
+    const m = ta.value.match(re);
+    if (m) cursorPos = m.index;
+  }
+  ta.setSelectionRange(cursorPos, cursorPos);
+  if (cursorPos > 0) {
+    const lineHeight = parseInt(getComputedStyle(ta).lineHeight, 10) || 20;
+    const linesBefore = ta.value.slice(0, cursorPos).split('\n').length - 1;
+    ta.scrollTop = Math.max(0, linesBefore * lineHeight - ta.clientHeight / 3);
+  }
 }
 
 export async function openTemplatesModal() {
@@ -146,7 +159,7 @@ export async function openTemplatesModal() {
   backdrop.querySelector('#tpl-llm-cmd').setSelectionRange(0, 0);
 }
 
-export async function openFullConfigModal(llamaSwapEnabled) {
+export async function openFullConfigModal(llamaSwapEnabled, selectName) {
   document.getElementById('status-menu').classList.remove('open');
   const isSwap = llamaSwapEnabled;
   const endpoint = isSwap ? '/api/llamaswap/config' : '/api/preset/config';
@@ -155,5 +168,6 @@ export async function openFullConfigModal(llamaSwapEnabled) {
     title: 'Edit ' + filename, subtitle: null,
     endpoint, placeholder: '',
     successMsg: filename + ' saved',
+    selectName,
   });
 }
