@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -27,15 +28,22 @@ func probeAtopwebVRAM(baseURL string) (totalBytes, usedBytes uint64, ok bool) {
 		return 0, 0, false
 	}
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			resp.Body.Close()
-		}
+	if err != nil {
+		log.Printf("atopweb probe failed: %v", err)
 		return 0, 0, false
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("atopweb probe: unexpected status %s from %s", resp.Status, url)
+		return 0, 0, false
+	}
 	var gpus []atopwebGPU
-	if err := json.NewDecoder(resp.Body).Decode(&gpus); err != nil || len(gpus) == 0 {
+	if err := json.NewDecoder(resp.Body).Decode(&gpus); err != nil {
+		log.Printf("atopweb probe: failed to decode response: %v", err)
+		return 0, 0, false
+	}
+	if len(gpus) == 0 {
+		log.Printf("atopweb probe: empty GPU list from %s", url)
 		return 0, 0, false
 	}
 	var totalMiB, usedMiB float64

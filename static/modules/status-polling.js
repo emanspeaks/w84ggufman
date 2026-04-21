@@ -29,7 +29,7 @@ export async function pollStatus() {
       if (!ver.textContent) ver.textContent = s.version;
     }
     if (s.atopwebURL != null) {
-      atopwebURL = s.atopwebURL;
+      atopwebURL = resolveAtopwebURL(s.atopwebURL);
       document.getElementById('vram-info').classList.toggle('clickable', !!s.atopwebURL);
     }
     if (s.disk && s.disk.totalBytes > 0) {
@@ -84,4 +84,14 @@ export async function pollStatus() {
 
 export function setupStatusPolling() {
   setInterval(pollStatus, 5000);
+}
+
+function resolveAtopwebURL(configURL) {
+  if (!configURL) return '';
+  try {
+    const u = new URL(configURL);
+    return `${u.protocol}//${window.location.hostname}${u.port ? ':' + u.port : ''}${u.pathname === '/' ? '' : u.pathname}`;
+  } catch (_) {
+    return configURL;
+  }
 }
