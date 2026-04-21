@@ -4,9 +4,109 @@ import { clearErr, showErr, esc, formatBytes } from './utils.js';
 import { setStatusBar } from './status-bar.js';
 import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
 import { downloadInProgress, warnVramBytes, setRefreshDlBtnExport, startDownload } from './download.js';
-import { diskFreeBytes } from './status-polling.js';
+import { diskFreeBytes, llamaSwapEnabled } from './status-polling.js';
+import { openFullConfigModal } from './config-modal.js';
+import { fetchLocalModels } from './local-models.js';
 
 export let currentRepoContext = null;
+
+function findMmprojSidecar(sidecars) {
+  for (const s of sidecars) {
+    const base = String(s.filename || '').split('/').pop().toLowerCase();
+    if (base.startsWith('mmproj-')) return s.filename;
+  }
+  return '';
+}
+
+function findVaeSidecar(sidecars) {
+  for (const s of sidecars) {
+    const base = String(s.filename || '').split('/').pop().toLowerCase();
+    if (base === 'ae.safetensors' || base.includes('vae')) return s.filename;
+  }
+  return '';
+}
+
+async function addLlamaSwapModelPreset(modelType, filename, sidecars) {
+  if (!llamaSwapEnabled) {
+    setStatusBar('Error', 'llama-swap is not enabled', false);
+    return;
+  }
+  if (!currentRepoContext) return;
+  const repoId = currentRepoContext.kind === 'local'
+    ? currentRepoContext.path
+    : currentRepoContext.repoId;
+  const mmprojFile = modelType === 'llm' ? findMmprojSidecar(sidecars) : '';
+  const vaeFile = modelType === 'sd' ? findVaeSidecar(sidecars) : '';
+  try {
+    const resp = await fetch('/api/llamaswap/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoId, filename, mmprojFile, vaeFile, modelType }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const { name } = await resp.json();
+    setStatusBar('Ready', 'Added ' + name + ' to config.yaml', false);
+    fetchLocalModels();
+    openFullConfigModal(true, name).catch(console.error);
+  } catch (e) {
+    setStatusBar('Error', 'Failed to add model: ' + e.message, false);
+  }
+}
+
+function showQuantContextMenu(event, filename, sidecars) {
+  if (!llamaSwapEnabled) return;
+  event.preventDefault();
+  event.stopPropagation();
+  document.querySelectorAll('.quant-ctx-menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'quant-ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:1000;background:#1e293b;border:1px solid #334155;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);padding:4px;min-width:200px;';
+
+  const mkItem = (label, onClick) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.style.cssText = 'display:block;width:100%;text-align:left;background:transparent;border:none;color:#f1f5f9;padding:6px 12px;font-size:0.85rem;cursor:pointer;border-radius:4px;font-family:inherit;';
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#334155'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.remove();
+      onClick();
+    });
+    return btn;
+  };
+
+  menu.appendChild(mkItem('Add LLM Model Preset…', () => addLlamaSwapModelPreset('llm', filename, sidecars)));
+  menu.appendChild(mkItem('Add SD Model Preset…', () => addLlamaSwapModelPreset('sd', filename, sidecars)));
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 4;
+  const maxY = window.innerHeight - rect.height - 4;
+  menu.style.left = Math.min(event.clientX, maxX) + 'px';
+  menu.style.top = Math.min(event.clientY, maxY) + 'px';
+
+  const closer = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener('mousedown', closer);
+      document.removeEventListener('keydown', keyCloser);
+    }
+  };
+  const keyCloser = (e) => {
+    if (e.key === 'Escape') {
+      menu.remove();
+      document.removeEventListener('mousedown', closer);
+      document.removeEventListener('keydown', keyCloser);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', closer);
+    document.addEventListener('keydown', keyCloser);
+  }, 0);
+}
 
 export function setRepoInput(value) {
   const input = document.getElementById('repo-input');
@@ -178,6 +278,7 @@ function renderRepoInfo(repoId, info) {
           (vramWarn ? ' vramwarn' : '') +
           (isPresent ? ' present' : '');
         tile.title = f.filename;
+        tile.addEventListener('contextmenu', (e) => showQuantContextMenu(e, f.filename, sidecars));
 
         const cb = document.createElement('input');
         cb.type = 'checkbox';

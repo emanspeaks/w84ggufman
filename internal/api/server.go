@@ -77,6 +77,8 @@ type PresetManager interface {
 type LlamaSwapManager interface {
 	ListModels() ([]LlamaSwapModelEntry, error)
 	RemoveModel(name string) error
+	AddModel(name, modelPath, mmprojPath, vaePath, modelType string) error
+	HasModel(name string) (bool, error)
 	LoadTemplates() any
 	ReadRaw(name string) (string, error)
 	WriteRaw(name, body string) error

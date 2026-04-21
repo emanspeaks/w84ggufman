@@ -56,15 +56,15 @@ export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refr
       const row = document.createElement('div');
       row.className = 'sidecar-row sidecar-tree-row sidecar-dir-row';
 
-      const dirCb = document.createElement('input');
-      dirCb.type = 'checkbox';
-      dirCb.className = 'sidecar-dir-cb';
-      row.appendChild(dirCb);
-
       const prefixSpan = document.createElement('span');
       prefixSpan.className = 'sidecar-tree-prefix';
       prefixSpan.textContent = branch;
       row.appendChild(prefixSpan);
+
+      const dirCb = document.createElement('input');
+      dirCb.type = 'checkbox';
+      dirCb.className = 'sidecar-dir-cb';
+      row.appendChild(dirCb);
 
       const dirSpan = document.createElement('span');
       dirSpan.className = 'sidecar-name sidecar-dir-name';
@@ -96,6 +96,11 @@ export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refr
       const row = document.createElement('div');
       row.className = 'sidecar-row sidecar-tree-row sidecar-file-row';
 
+      const prefixSpan = document.createElement('span');
+      prefixSpan.className = 'sidecar-tree-prefix';
+      prefixSpan.textContent = branch;
+      row.appendChild(prefixSpan);
+
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.className = 'sidecar-cb';
@@ -105,14 +110,9 @@ export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refr
       descendantFileCbs.push(cb);
       row.appendChild(cb);
 
-      const prefixSpan = document.createElement('span');
-      prefixSpan.className = 'sidecar-tree-prefix';
-      prefixSpan.textContent = branch;
-      row.appendChild(prefixSpan);
-
       const nameSpan = document.createElement('span');
       nameSpan.className = 'sidecar-name';
-      nameSpan.textContent = f.entry.filename;
+      nameSpan.textContent = f.name;
       row.appendChild(nameSpan);
 
       if (f.entry.size != null) {

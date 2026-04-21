@@ -38,5 +38,6 @@ func buildMux(srv *internalapi.Server, staticFS fs.FS) *http.ServeMux {
 	// mux.HandleFunc("PUT /api/llamaswap/groups/{name}", srv.handlePutLlamaSwapGroups)
 	mux.HandleFunc("GET /api/llamaswap/config", srv.HandleGetLlamaSwapConfig)
 	mux.HandleFunc("PUT /api/llamaswap/config", srv.HandlePutLlamaSwapConfig)
+	mux.HandleFunc("POST /api/llamaswap/model", srv.HandleAddLlamaSwapModel)
 	return mux
 }
