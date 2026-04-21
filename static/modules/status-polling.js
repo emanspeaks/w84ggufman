@@ -54,6 +54,17 @@ export async function pollStatus() {
         fill.className = 'resource-bar-fill ok';
         text.textContent = 'VRAM: ? / ' + formatBytes(s.vramBytes);
       }
+      const gpuRow = document.getElementById('gpu-row');
+      if (s.gpuPctKnown) {
+        const gpuPct = Math.round(s.gpuPct);
+        const gpuFill = document.getElementById('gpu-bar-fill');
+        gpuFill.style.width = gpuPct + '%';
+        gpuFill.className = 'resource-bar-fill ' + (gpuPct >= 90 ? 'crit' : gpuPct >= 75 ? 'warn' : 'ok');
+        document.getElementById('gpu-text').textContent = 'GPU: ' + gpuPct + '%';
+        gpuRow.style.display = 'flex';
+      } else {
+        gpuRow.style.display = 'none';
+      }
       document.getElementById('vram-info').style.display = 'flex';
     }
     setWarnThresholds(s.warnDownloadBytes, s.warnVramBytes);

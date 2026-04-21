@@ -21,6 +21,8 @@ type statusResponse struct {
 	LlamaSwapEnabled   bool     `json:"llamaSwapEnabled"`
 	LlamaServiceLabel  string   `json:"llamaServiceLabel"`
 	AtopwebURL         string   `json:"atopwebURL,omitempty"`
+	GpuPct             float64  `json:"gpuPct"`
+	GpuPctKnown        bool     `json:"gpuPctKnown"`
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,8 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	vramTotal := s.vramBytes
 	var vramUsed uint64
 	var vramUsedKnown bool
+	var gpuPct float64
+	var gpuPctKnown bool
 	if s.cfg.AtopwebURL != "" {
 		if t, u, ok := probeAtopwebVRAM(s.cfg.AtopwebURL); ok {
 			if t > 0 {
@@ -60,6 +64,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 			vramUsed = u
 			vramUsedKnown = true
 		}
+		gpuPct, gpuPctKnown = probeAtopwebGPUPct(s.cfg.AtopwebURL)
 	}
 	if !vramUsedKnown && vramTotal > 0 && s.deps.DetectVRAMUsedBytes != nil {
 		vramUsed, vramUsedKnown = s.deps.DetectVRAMUsedBytes(s.cfg.LlamaService)
@@ -82,5 +87,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		LlamaSwapEnabled:   s.llamaSwap != nil,
 		LlamaServiceLabel:  strings.TrimSuffix(s.cfg.LlamaService, ".service"),
 		AtopwebURL:         s.cfg.AtopwebURL,
+		GpuPct:             gpuPct,
+		GpuPctKnown:        gpuPctKnown,
 	})
 }
