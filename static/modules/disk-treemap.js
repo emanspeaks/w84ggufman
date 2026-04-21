@@ -2,8 +2,7 @@
 
 import { esc, formatBytes } from './utils.js';
 
-const DIR_HEADER = 18;  // px reserved for directory label bar
-const DIR_PAD = 2;      // px inset on sides/bottom within a dir box
+const DIR_PAD = 2;  // px inset on each side within a dir box
 
 let dialogEl = null;
 let dialogCleanup = null;
@@ -41,7 +40,7 @@ export async function openDiskTreemap() {
 
   dialogEl.querySelector('.dtm-summary').textContent =
     formatBytes(data.usedBytes) + ' used / ' + formatBytes(data.totalBytes) +
-    ' (' + formatBytes(data.freeBytes) + ' free, ' + formatBytes(data.modelsDirBytes) + ' in models)';
+    ' (' + formatBytes(data.freeBytes) + ' free, ' + formatBytes(data.modelsDirBytes) + ' used in models dir)';
 
   dialogEl.querySelector('.dtm-close').addEventListener('click', closeDiskTreemap);
 
@@ -206,9 +205,46 @@ function layoutChildren(container, children, x, y, w, h, state) {
   if (!items.length || w < 2 || h < 2) return;
   const total = items.reduce((s, c) => s + c.size, 0);
   if (total <= 0) return;
-  const scale = (w * h) / total;
-  for (const r of squarify(items, scale, x, y, w, h)) {
-    renderNode(container, r.node, r.x, r.y, r.w, r.h, state);
+  binaryLayout(container, items, 0, items.length, total, x, y, x + w, y + h, state);
+}
+
+// Recursive binary-partition treemap — divides items into two size-balanced
+// halves and cuts along the longer axis, producing normalized aspect ratios.
+function binaryLayout(container, nodes, i, j, valueSum, x0, y0, x1, y1, state) {
+  if (i >= j) return;
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 2 || h < 2) return;
+
+  if (j - i === 1) {
+    renderNode(container, nodes[i], x0, y0, w, h, state);
+    return;
+  }
+
+  // Find the split index k where the left group's total size is closest to half.
+  const halfValue = valueSum / 2;
+  let k = i + 1;
+  let acc = nodes[i].size;
+  while (k < j - 1 && acc + nodes[k].size <= halfValue) {
+    acc += nodes[k].size;
+    k++;
+  }
+  // Include one more item if it brings us closer to the target half.
+  if (k < j - 1 && Math.abs(acc + nodes[k].size - halfValue) < Math.abs(acc - halfValue)) {
+    acc += nodes[k].size;
+    k++;
+  }
+
+  const leftValue = acc;
+  const rightValue = valueSum - leftValue;
+
+  if (w >= h) {
+    const xk = x0 + w * leftValue / valueSum;
+    binaryLayout(container, nodes, i, k, leftValue, x0, y0, xk, y1, state);
+    binaryLayout(container, nodes, k, j, rightValue, xk, y0, x1, y1, state);
+  } else {
+    const yk = y0 + h * leftValue / valueSum;
+    binaryLayout(container, nodes, i, k, leftValue, x0, y0, x1, yk, state);
+    binaryLayout(container, nodes, k, j, rightValue, x0, yk, x1, y1, state);
   }
 }
 
@@ -229,9 +265,9 @@ function renderNode(container, node, x, y, w, h, state) {
     return;
   }
 
-  // dir or modelsRoot: draw the container box, then recurse into children
+  // dir (or modelsRoot, though that is never rendered directly): bordered box
   const el = document.createElement('div');
-  el.className = kind === 'modelsRoot' ? 'dtm-dir dtm-dir-models' : 'dtm-dir';
+  el.className = 'dtm-dir';
   el.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;box-sizing:border-box;`;
   el.dataset.path = node.path;
   state.dirElMap.set(node.path, el);
@@ -239,18 +275,10 @@ function renderNode(container, node, x, y, w, h, state) {
   el.addEventListener('mouseleave', () => { state.hoverPathEl.textContent = ''; });
   container.appendChild(el);
 
-  const hasHeader = h > DIR_HEADER + 4;
-  if (hasHeader && w >= 8) {
-    const hdr = document.createElement('div');
-    hdr.className = 'dtm-dir-hdr';
-    if (w >= 24) hdr.textContent = node.name;
-    el.appendChild(hdr);
-  }
-
   const innerX = x + DIR_PAD;
-  const innerY = y + (hasHeader ? DIR_HEADER : DIR_PAD);
+  const innerY = y + DIR_PAD;
   const innerW = w - DIR_PAD * 2;
-  const innerH = h - (hasHeader ? DIR_HEADER : DIR_PAD) - DIR_PAD;
+  const innerH = h - DIR_PAD * 2;
   layoutChildren(container, node.children, innerX, innerY, innerW, innerH, state);
 }
 
@@ -259,60 +287,6 @@ function makeDiv(x, y, w, h, cls) {
   el.className = cls;
   el.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
   return el;
-}
-
-// ── Squarified treemap ─────────────────────────────────────────────────────
-
-function squarify(nodes, scale, x, y, w, h) {
-  const results = [];
-  const rect = { x, y, w, h };
-  let i = 0;
-  while (i < nodes.length) {
-    const shorter = Math.min(rect.w, rect.h);
-    if (shorter <= 0) break;
-    const row = [nodes[i].size * scale];
-    const rowN = [nodes[i]];
-    let best = worstAR(row, shorter);
-    let j = i + 1;
-    while (j < nodes.length) {
-      const next = nodes[j].size * scale;
-      row.push(next);
-      const cand = worstAR(row, shorter);
-      if (cand > best) { row.pop(); break; }
-      rowN.push(nodes[j]);
-      best = cand;
-      j++;
-    }
-    const sum = row.reduce((s, v) => s + v, 0);
-    if (sum <= 0) { i = j; continue; }
-    if (rect.w >= rect.h) {
-      const cw = sum / rect.h;
-      let yy = rect.y;
-      for (let k = 0; k < row.length; k++) {
-        results.push({ node: rowN[k], x: rect.x, y: yy, w: cw, h: row[k] / cw });
-        yy += row[k] / cw;
-      }
-      rect.x += cw; rect.w -= cw;
-    } else {
-      const rh = sum / rect.w;
-      let xx = rect.x;
-      for (let k = 0; k < row.length; k++) {
-        results.push({ node: rowN[k], x: xx, y: rect.y, w: row[k] / rh, h: rh });
-        xx += row[k] / rh;
-      }
-      rect.y += rh; rect.h -= rh;
-    }
-    i = j;
-  }
-  return results;
-}
-
-function worstAR(row, shorter) {
-  let rmax = -Infinity, rmin = Infinity, sum = 0;
-  for (const v of row) { if (v > rmax) rmax = v; if (v < rmin) rmin = v; sum += v; }
-  if (sum <= 0 || shorter <= 0) return Infinity;
-  const s2 = shorter * shorter, sum2 = sum * sum;
-  return Math.max((s2 * rmax) / sum2, sum2 / (s2 * rmin));
 }
 
 // ── Colors ─────────────────────────────────────────────────────────────────
