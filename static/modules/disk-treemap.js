@@ -79,16 +79,37 @@ export async function openDiskTreemap() {
   const ro = new ResizeObserver(render);
   ro.observe(body);
 
-  dialogEl.querySelector('#dtm-show-system').addEventListener('change', e => {
-    state.showSystem = e.target.checked;
-    render();
-  });
-  dialogEl.querySelector('#dtm-show-free').addEventListener('change', e => {
-    state.showFree = e.target.checked;
-    render();
-  });
+  const systemCb = dialogEl.querySelector('#dtm-show-system');
+  const freeCb   = dialogEl.querySelector('#dtm-show-free');
+  const systemLbl = systemCb.closest('label');
+  const freeLbl   = freeCb.closest('label');
+
+  systemCb.addEventListener('change', e => { state.showSystem = e.target.checked; render(); });
+  freeCb.addEventListener('change',   e => { state.showFree   = e.target.checked; render(); });
+
   dialogEl.querySelector('#dtm-equal-display').addEventListener('change', e => {
     state.equalDisplay = e.target.checked;
+    if (e.target.checked) {
+      state._savedShowSystem = state.showSystem;
+      state._savedShowFree   = state.showFree;
+      state.showSystem = false;
+      state.showFree   = false;
+      systemCb.checked = false;
+      freeCb.checked   = false;
+      systemCb.disabled = true;
+      freeCb.disabled   = true;
+      systemLbl.style.opacity = '0.4';
+      freeLbl.style.opacity   = '0.4';
+    } else {
+      state.showSystem = state._savedShowSystem ?? true;
+      state.showFree   = state._savedShowFree   ?? true;
+      systemCb.checked = state.showSystem;
+      freeCb.checked   = state.showFree;
+      systemCb.disabled = false;
+      freeCb.disabled   = false;
+      systemLbl.style.opacity = '';
+      freeLbl.style.opacity   = '';
+    }
     render();
   });
 
@@ -455,7 +476,7 @@ function buildLegend(el, tree) {
 
   const label = document.createElement('span');
   label.className = 'dtm-legend-label';
-  label.textContent = 'Color = ext:';
+  label.textContent = 'Color = file ext:';
   el.appendChild(label);
 
   for (const [ext] of exts) {
@@ -470,7 +491,7 @@ function buildLegend(el, tree) {
 
 function setupDrag(dlg) {
   const header = dlg.querySelector('.dtm-header');
-  let dragging = false, maximized = false;
+  let dragging = false, pendingDrag = false, maximized = false;
   let startX = 0, startY = 0, startL = 0, startT = 0;
 
   function onDblClick(e) {
@@ -484,28 +505,34 @@ function setupDrag(dlg) {
     } else {
       dlg.style.left = '50%'; dlg.style.top = '50%';
       dlg.style.width = ''; dlg.style.height = '';
+      dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
       dlg.style.transform = 'translate(-50%, -50%)';
     }
   }
 
   function onDown(e) {
     if (e.target.classList.contains('dtm-close')) return;
-    dragging = true;
-    maximized = false;
-    const r = dlg.getBoundingClientRect();
-    startX = e.clientX; startY = e.clientY; startL = r.left; startT = r.top;
-    dlg.style.left = startL + 'px'; dlg.style.top = startT + 'px';
-    dlg.style.width = ''; dlg.style.height = '';
-    dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
-    dlg.style.transform = 'none';
+    pendingDrag = true;
+    startX = e.clientX; startY = e.clientY;
     e.preventDefault();
   }
   function onMove(e) {
+    if (pendingDrag && (Math.abs(e.clientX - startX) > 3 || Math.abs(e.clientY - startY) > 3)) {
+      pendingDrag = false;
+      dragging = true;
+      maximized = false;
+      const r = dlg.getBoundingClientRect();
+      startL = r.left; startT = r.top;
+      dlg.style.left = startL + 'px'; dlg.style.top = startT + 'px';
+      dlg.style.width = ''; dlg.style.height = '';
+      dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
+      dlg.style.transform = 'none';
+    }
     if (!dragging) return;
     dlg.style.left = Math.max(0, Math.min(window.innerWidth  - 80, startL + e.clientX - startX)) + 'px';
     dlg.style.top  = Math.max(0, Math.min(window.innerHeight - 40, startT + e.clientY - startY)) + 'px';
   }
-  function onUp() { dragging = false; }
+  function onUp() { dragging = false; pendingDrag = false; }
   header.addEventListener('dblclick',  onDblClick);
   header.addEventListener('mousedown', onDown);
   document.addEventListener('mousemove', onMove);
