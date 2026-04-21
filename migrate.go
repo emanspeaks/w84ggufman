@@ -138,6 +138,13 @@ func reorganizeRepoFiles(repoDir, repoID, hfToken string, pm *presetManager, lsm
 		return false
 	}
 
+	// Effective ignore patterns for this repo dir.
+	repoMeta := readModelMeta(repoDir)
+	ignorePatterns := repoMeta.Ignore
+	if len(ignorePatterns) == 0 {
+		ignorePatterns = defaultIgnorePatterns
+	}
+
 	// Build lookup tables: basename → HF path, and shard-stem → HF representative path.
 	allHFFiles := append(info.Models, info.Sidecars...)
 	hfByBasename := make(map[string]string)  // base → HF relative path
@@ -164,11 +171,16 @@ func reorganizeRepoFiles(repoDir, repoID, hfToken string, pm *presetManager, lsm
 	var rogueFiles []string
 
 	filepath.Walk(repoDir, func(path string, fi os.FileInfo, err error) error {
-		if err != nil || fi.IsDir() || fi.Name() == metaFilename {
+		if err != nil {
 			return nil
 		}
-		// Skip dot files.
-		if strings.HasPrefix(fi.Name(), ".") {
+		if fi.Name() == metaFilename || isIgnoredEntry(fi.Name(), ignorePatterns, false, fi.IsDir()) {
+			if fi.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if fi.IsDir() {
 			return nil
 		}
 
@@ -224,9 +236,7 @@ func reorganizeRepoFiles(repoDir, repoID, hfToken string, pm *presetManager, lsm
 			log.Printf("migrate: reorg %s — could not move %s: %v", repoID, op.src, err)
 			continue
 		}
-		srcRel, _ := filepath.Rel(repoDir, op.src)
-		dstRel, _ := filepath.Rel(repoDir, op.dst)
-		log.Printf("migrate: reorg %s — %s → %s", repoID, srcRel, dstRel)
+		log.Printf("migrate: reorg %s — %s → %s", repoID, op.src, op.dst)
 		// Patch absolute paths in config files for each individual file move.
 		patchConfigPaths(pm, lsm, op.src, op.dst)
 	}
@@ -253,7 +263,10 @@ func updateMetaAfterReorg(repoDir, repoID string, existingMeta modelMeta, allRec
 		newMeta.RepoID = repoID
 	}
 	if newMeta.RepoID == "" && !newMeta.SkipHFSync && len(newMeta.Ignore) == 0 {
-		os.Remove(filepath.Join(repoDir, metaFilename))
+		p := filepath.Join(repoDir, metaFilename)
+		if err := os.Remove(p); err == nil {
+			log.Printf("migrate: deleted %s", p)
+		}
 		return
 	}
 	_ = writeModelMeta(repoDir, newMeta)
@@ -271,7 +284,9 @@ func cleanEmptyDirs(root string) {
 	for i := len(dirs) - 1; i >= 0; i-- {
 		entries, err := os.ReadDir(dirs[i])
 		if err == nil && len(entries) == 0 {
-			os.Remove(dirs[i])
+			if err := os.Remove(dirs[i]); err == nil {
+				log.Printf("migrate: removed empty dir %s", dirs[i])
+			}
 		}
 	}
 }

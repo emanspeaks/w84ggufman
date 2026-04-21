@@ -101,26 +101,80 @@ func isOrgDir(dir string) bool {
 // unless overridden by a .w84ggufman.json at the modelsDir root.
 var defaultIgnorePatterns = []string{".cache", ".w84ggufman*"}
 
-// matchesIgnorePattern reports whether name matches a single gitignore-style
-// glob pattern (uses filepath.Match semantics: * matches within a segment).
-func matchesIgnorePattern(name, pattern string) bool {
+// matchesIgnorePattern reports whether name (a single path component) matches a
+// preprocessed gitignore-style pattern. isDir indicates whether name refers to a
+// directory; trailing-slash and "/**" patterns only match directories. The caller
+// must have already stripped leading "!" negation and backslash escapes.
+func matchesIgnorePattern(name, pattern string, isDir bool) bool {
+	// Trailing "/" → directory-only match.
+	if strings.HasSuffix(pattern, "/") {
+		if !isDir {
+			return false
+		}
+		pattern = strings.TrimSuffix(pattern, "/")
+	}
+
+	// Strip a leading "/" (anchors to .gitignore root; irrelevant for name-level matching).
+	pattern = strings.TrimPrefix(pattern, "/")
+
+	// "**/name" → match at any depth; strip the prefix.
+	if strings.HasPrefix(pattern, "**/") {
+		pattern = strings.TrimPrefix(pattern, "**/")
+	}
+
+	// "name/**" → matches everything inside name; treat as dir-only match on name.
+	if strings.HasSuffix(pattern, "/**") {
+		if !isDir {
+			return false
+		}
+		pattern = strings.TrimSuffix(pattern, "/**")
+	}
+
+	// Collapse any remaining "**" → "*" (no path separators in a single name).
+	pattern = strings.ReplaceAll(pattern, "**", "*")
+
 	matched, _ := filepath.Match(pattern, name)
 	return matched
 }
 
-// isIgnoredEntry reports whether a top-level entry should be excluded from
-// the local models listing. patterns is the active ignore list; showDotFiles
-// controls whether dot-prefixed entries are visible (ignore list always applies).
-func isIgnoredEntry(name string, patterns []string, showDotFiles bool) bool {
-	if !showDotFiles && strings.HasPrefix(name, ".") {
-		return true
-	}
-	for _, p := range patterns {
-		if matchesIgnorePattern(name, p) {
-			return true
+// isIgnoredEntry reports whether an entry should be excluded. Patterns are
+// evaluated in gitignore order: later patterns override earlier ones. Blank
+// lines and "#"-prefixed lines are comments; "\#" and "\!" escape the
+// respective special chars. "!" negates (whitelists) a previous match.
+// Trailing unescaped whitespace is trimmed. The dot-files default acts as
+// the implicit first rule and can be overridden by a later "!.name" pattern.
+func isIgnoredEntry(name string, patterns []string, showDotFiles, isDir bool) bool {
+	ignored := !showDotFiles && strings.HasPrefix(name, ".")
+	for _, raw := range patterns {
+		// Trim trailing unescaped whitespace.
+		p := strings.TrimRight(raw, " \t")
+		if len(p) < len(raw) && strings.HasSuffix(p, "\\") {
+			p = p + " " // backslash-escaped trailing space is significant
+		}
+		// Skip blank lines and comments.
+		if p == "" || strings.HasPrefix(p, "#") {
+			continue
+		}
+		// Check for negation or leading backslash escape.
+		negate := false
+		if strings.HasPrefix(p, "!") {
+			negate = true
+			p = p[1:]
+		} else if strings.HasPrefix(p, "\\") {
+			p = p[1:] // \# or \! → literal character
+		}
+		if p == "" {
+			continue
+		}
+		if matchesIgnorePattern(name, p, isDir) {
+			if negate {
+				ignored = false
+			} else {
+				ignored = true
+			}
 		}
 	}
-	return false
+	return ignored
 }
 
 // scanFilesRelative returns all regular files under dir as forward-slash
@@ -226,7 +280,7 @@ func (s *server) handleLocal(w http.ResponseWriter, r *http.Request) {
 		if !entry.IsDir() {
 			continue
 		}
-		if isIgnoredEntry(entry.Name(), ignorePatterns, s.cfg.ShowDotFiles) {
+		if isIgnoredEntry(entry.Name(), ignorePatterns, s.cfg.ShowDotFiles, entry.IsDir()) {
 			continue
 		}
 		dirPath := filepath.Join(s.cfg.ModelsDir, entry.Name())
