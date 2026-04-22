@@ -7,22 +7,23 @@ import (
 )
 
 type statusResponse struct {
-	LlamaReachable     bool     `json:"llamaReachable"`
-	DownloadInProgress bool     `json:"downloadInProgress"`
-	ActiveDownload     string   `json:"activeDownload"`
-	Version            string   `json:"version"`
-	Disk               diskInfo `json:"disk"`
-	WarnDownloadBytes  uint64   `json:"warnDownloadBytes"`
-	VramBytes          uint64   `json:"vramBytes"`
-	VramUsedBytes      uint64   `json:"vramUsedBytes"`
-	VramUsedKnown      bool     `json:"vramUsedKnown"`
-	WarnVramBytes      uint64   `json:"warnVramBytes"`
-	LoadedModels       []string `json:"loadedModels"`
-	LlamaSwapEnabled   bool     `json:"llamaSwapEnabled"`
-	LlamaServiceLabel  string   `json:"llamaServiceLabel"`
-	AtopwebURL         string   `json:"atopwebURL,omitempty"`
-	GpuPct             float64  `json:"gpuPct"`
-	GpuPctKnown        bool     `json:"gpuPctKnown"`
+	LlamaReachable     bool         `json:"llamaReachable"`
+	DownloadInProgress bool         `json:"downloadInProgress"`
+	ActiveDownload     string       `json:"activeDownload"`
+	Version            string       `json:"version"`
+	Disk               diskInfo     `json:"disk"`
+	WarnDownloadBytes  uint64       `json:"warnDownloadBytes"`
+	VramBytes          uint64       `json:"vramBytes"`
+	VramUsedBytes      uint64       `json:"vramUsedBytes"`
+	VramUsedKnown      bool         `json:"vramUsedKnown"`
+	WarnVramBytes      uint64       `json:"warnVramBytes"`
+	LoadedModels       []string     `json:"loadedModels"`
+	LlamaSwapEnabled   bool         `json:"llamaSwapEnabled"`
+	LlamaServiceLabel  string       `json:"llamaServiceLabel"`
+	AtopwebURL         string       `json:"atopwebURL,omitempty"`
+	GpuPct             float64      `json:"gpuPct"`
+	GpuPctKnown        bool         `json:"gpuPctKnown"`
+	Queue              []QueueEntry `json:"queue"`
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -89,5 +90,6 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		AtopwebURL:         s.cfg.AtopwebURL,
 		GpuPct:             gpuPct,
 		GpuPctKnown:        gpuPctKnown,
+		Queue:              s.dl.QueueEntries(),
 	})
 }

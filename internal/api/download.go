@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -26,15 +27,20 @@ func (s *Server) HandleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.dl.Start(req.RepoID, req.Filenames, req.SidecarFiles, req.TotalBytes, req.Force); err != nil {
+	queued, err := s.dl.Start(req.RepoID, req.Filenames, req.SidecarFiles, req.TotalBytes, req.Force)
+	if err != nil {
 		log.Printf("error: start download %s %v: %v", req.RepoID, req.Filenames, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"conflict": "busy", "message": err.Error()})
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	log.Printf("download queued: %s %v", req.RepoID, req.Filenames)
+	if queued {
+		log.Printf("download enqueued: %s %v", req.RepoID, req.Filenames)
+	} else {
+		log.Printf("download started: %s %v", req.RepoID, req.Filenames)
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{"queued": queued})
 }
 
 func (s *Server) HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +153,16 @@ func (s *Server) HandleDeleteFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, strings.Join(errMsgs, "; "), http.StatusInternalServerError)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) HandleRemoveFromQueue(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	s.dl.RemoveFromQueue(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

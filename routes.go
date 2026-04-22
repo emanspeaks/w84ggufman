@@ -15,6 +15,7 @@ func buildMux(srv *internalapi.Server, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /api/readme", srv.HandleReadme)
 	mux.HandleFunc("POST /api/download", srv.HandleDownload)
 	mux.HandleFunc("POST /api/download/cancel", srv.HandleCancelDownload)
+	mux.HandleFunc("DELETE /api/queue/{id}", srv.HandleRemoveFromQueue)
 	mux.HandleFunc("GET /api/download/status", srv.HandleDownloadStatus)
 	mux.HandleFunc("DELETE /api/local/{name}", srv.HandleDeleteLocal)
 	mux.HandleFunc("DELETE /api/local", srv.HandleDeleteRepo)

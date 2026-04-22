@@ -1,8 +1,7 @@
 // Download handling and SSE streaming
 
-import { setStatusBar } from './status-bar.js';
+import { setStatusBar, renderQueuePanel } from './status-bar.js';
 import { formatBytes, formatETA } from './utils.js';
-import { isPresentFile } from './quant-grid.js';
 
 export let downloadInProgress = false;
 export let activeEventSource = null;
@@ -27,7 +26,6 @@ export function setRefreshDlBtnExport(fn) {
 }
 
 export async function startDownload(repoId, filenames, sidecarFiles, totalSize) {
-  if (downloadInProgress) return;
   if (!Array.isArray(filenames)) filenames = [filenames];
   if (warnDownloadBytes > 0 && totalSize != null && totalSize > warnDownloadBytes) {
     const gb = (totalSize / 1073741824).toFixed(2);
@@ -50,14 +48,15 @@ export async function startDownload(repoId, filenames, sidecarFiles, totalSize) 
     setStatusBar('Error', 'Failed to start download: ' + e.message, false);
     return;
   }
-  if (resp.status === 409) {
-    let conflict;
-    try { conflict = await resp.json(); } catch (_) { conflict = {}; }
-    setStatusBar('Error', 'Download conflict: ' + (conflict.message || resp.statusText), false);
-    return;
-  }
   if (!resp.ok) {
     setStatusBar('Error', 'Failed to start download: ' + (await resp.text()), false);
+    return;
+  }
+  const data = await resp.json();
+  if (data.queued) {
+    setStatusBar('Queued', filenames[0], true);
+    // Ensure SSE is open so queue events flow to the panel
+    if (!activeEventSource) openSSE();
     return;
   }
   setDownloadState(true);
@@ -93,18 +92,24 @@ export function openSSE() {
     document.getElementById('status-bar-text').textContent = text;
   });
 
+  es.addEventListener('queue', (e) => {
+    renderQueuePanel(JSON.parse(e.data));
+  });
+
   es.addEventListener('status', (e) => {
     const msg = JSON.parse(e.data);
     es.close();
     activeEventSource = null;
     document.getElementById('dl-progress-fill').style.width = '0%';
     if (msg.status === 'done') {
+      renderQueuePanel([]);
       setStatusBar('Ready', 'Download complete', false);
       setDownloadState(false);
       import('./local-models.js').then(mod => mod.fetchLocalModels());
       import('./repo-browser.js').then(mod => mod.refreshCurrentRepoView());
       import('./status-polling.js').then(mod => mod.pollStatus());
     } else if (msg.status === 'idle') {
+      renderQueuePanel([]);
       setStatusBar('Ready', '', false);
       setDownloadState(false);
     }

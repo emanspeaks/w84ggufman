@@ -47,12 +47,18 @@ type hfTreeEntry struct {
 
 // hasQuantRe matches a GGUF filename ending with a known quant family prefix
 // (longest-first: IQ, TQ, BF, MXFP, NVFP, then single-char Q/F) followed by
-// digits. Handles UD-* variant filenames transparently.
-var hasQuantRe = regexp.MustCompile(`(?i)[-_](?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*\.gguf$`)
+// digits. Handles UD-* variant filenames and multi-part shard suffixes
+// (-00001-of-00003) transparently. Separator may be [-_.].
+var hasQuantRe = regexp.MustCompile(`(?i)[-_.](?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*(?:-\d{5}-of-\d{5})?\.gguf$`)
 
 // quantDirRe matches a subdirectory name that is itself a quant identifier
 // (e.g. "Q8_0", "BF16", "UD-Q5_K_M"). Used to classify subdir-grouped shards.
 var quantDirRe = regexp.MustCompile(`(?i)^(?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+`)
+
+// quantInNameRe matches a directory name that ENDS with a quant token, possibly
+// embedded after a model-name prefix or followed by ".gguf". Catches dirs like
+// "Llama-3.3-70B-Instruct-Q5_K_L", "model-f16", "Codestral-22B-v0.1-f32.gguf".
+var quantInNameRe = regexp.MustCompile(`(?i)(?:^|[-_.])(?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*(?:\.gguf)?$`)
 
 // quantSuffixRe captures the quant token from the end of a model filename stem
 // (after stripping .gguf and any shard suffix). Companion to hasQuantRe/quantDirRe.
@@ -159,7 +165,10 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 			Size:        sz,
 			DisplayName: dirName,
 		}
-		if quantDirRe.MatchString(dirName) {
+		// Accept if the directory name is or ends with a quant identifier.
+		// quantDirRe: pure quant dir ("Q4_K_M", "BF16").
+		// quantInNameRe: model-prefixed dir ("Llama-3.3-70B-Q5_K_L", "model-f32.gguf").
+		if quantDirRe.MatchString(dirName) || quantInNameRe.MatchString(dirName) {
 			info.Models = append(info.Models, f)
 		} else {
 			info.Sidecars = append(info.Sidecars, f)

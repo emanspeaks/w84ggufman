@@ -330,6 +330,35 @@ html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
 #status-resize-handle:hover,
 #status-resize-handle.dragging { background: #334155; }
 #status-bar.expanded #status-resize-handle { display: block; }
+#queue-panel {
+  border-top: 1px solid #1e293b;
+  padding: 4px 1rem 5px;
+  max-height: 120px; overflow-y: auto;
+}
+#queue-panel .queue-header {
+  color: #475569; text-transform: uppercase;
+  letter-spacing: 0.05em; font-size: 0.62rem;
+  margin-bottom: 3px;
+}
+#queue-panel .queue-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 1px 0;
+}
+#queue-panel .queue-item-label {
+  flex: 1; color: #94a3b8;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#queue-panel .queue-item-size { color: #475569; white-space: nowrap; }
+#queue-panel .queue-item-remove {
+  background: none; border: none; color: #475569;
+  cursor: pointer; padding: 0 2px; font-size: 0.65rem;
+  line-height: 1; flex-shrink: 0;
+}
+#queue-panel .queue-item-remove:hover { color: #ef4444; }
+html.light #queue-panel { border-top-color: #e2e8f0; }
+html.light #queue-panel .queue-header { color: #94a3b8; }
+html.light #queue-panel .queue-item-label { color: #475569; }
+html.light #queue-panel .queue-item-size { color: #94a3b8; }
 #status-bar-main {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 6px 1rem; min-height: 32px;

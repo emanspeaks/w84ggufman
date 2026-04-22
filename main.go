@@ -41,7 +41,9 @@ if err != nil {
 log.Fatalf("failed to load config: %v", err)
 }
 
-ensureManagedINI(cfg.ModelsDir)
+if cfg.LlamaSwapConfig == "" {
+	ensureManagedINI(cfg.ModelsDir)
+}
 
 pm := newPresetManager(cfg)
 lsm := newLlamaSwapManager(cfg)

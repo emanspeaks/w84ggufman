@@ -56,6 +56,15 @@ func shardPattern(filename string) string {
 	return dir + base
 }
 
+// queueSSEEntry is the wire format for a pending queue item sent to the frontend.
+type queueSSEEntry struct {
+	ID         int64    `json:"id"`
+	Label      string   `json:"label"`
+	TotalBytes int64    `json:"totalBytes"`
+	RepoID     string   `json:"repoId"`
+	Filenames  []string `json:"filenames"`
+}
+
 func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -68,7 +77,7 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d.mu.Lock()
-	idle := !d.busy && len(d.lines) == 0
+	idle := !d.busy && len(d.lines) == 0 && len(d.queue) == 0
 	d.mu.Unlock()
 
 	if idle {
@@ -78,6 +87,7 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sent := 0
+	lastQueueVer := int64(-1)
 	for {
 		select {
 		case <-r.Context().Done():
@@ -90,6 +100,9 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		copy(snapshot, d.lines)
 		busy := d.busy
 		prog := d.progress
+		queueVer := d.queueVer
+		queueSnap := make([]queueEntry, len(d.queue))
+		copy(queueSnap, d.queue)
 		d.mu.Unlock()
 
 		for ; sent < len(snapshot); sent++ {
@@ -100,6 +113,22 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		if prog != nil {
 			writeSSEEvent(w, "progress", prog)
 			flusher.Flush()
+		}
+
+		if queueVer != lastQueueVer {
+			entries := make([]queueSSEEntry, len(queueSnap))
+			for i, e := range queueSnap {
+				entries[i] = queueSSEEntry{
+					ID:         e.id,
+					Label:      e.label,
+					TotalBytes: e.totalBytes,
+					RepoID:     e.repoID,
+					Filenames:  e.filenames,
+				}
+			}
+			writeSSEEvent(w, "queue", entries)
+			flusher.Flush()
+			lastQueueVer = queueVer
 		}
 
 		if !busy {

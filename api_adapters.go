@@ -19,8 +19,27 @@ func (a downloaderAdapter) CancelDownload() {
 	a.d.cancelDownload()
 }
 
-func (a downloaderAdapter) Start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, force bool) error {
+func (a downloaderAdapter) Start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, force bool) (bool, error) {
 	return a.d.start(repoID, filenames, sidecarFiles, totalBytes, force)
+}
+
+func (a downloaderAdapter) QueueEntries() []internalapi.QueueEntry {
+	entries := a.d.queueEntries()
+	out := make([]internalapi.QueueEntry, len(entries))
+	for i, e := range entries {
+		out[i] = internalapi.QueueEntry{
+			ID:         e.id,
+			Label:      e.label,
+			TotalBytes: e.totalBytes,
+			RepoID:     e.repoID,
+			Filenames:  append([]string(nil), e.filenames...),
+		}
+	}
+	return out
+}
+
+func (a downloaderAdapter) RemoveFromQueue(id int64) bool {
+	return a.d.removeFromQueue(id)
 }
 
 func (a downloaderAdapter) StreamSSE(w http.ResponseWriter, r *http.Request) {

@@ -38,40 +38,7 @@ func scanCRLF(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-// start begins a download. All selected files and sidecars are placed under
-// modelsDir/org/repo/, preserving the HF subpath structure within that dir.
-func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, _ bool) error {
-	if len(filenames) == 0 {
-		return fmt.Errorf("at least one filename is required")
-	}
-	for _, filename := range filenames {
-		if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
-			return fmt.Errorf("invalid filename: %s", filename)
-		}
-	}
-	for _, sf := range sidecarFiles {
-		if strings.Contains(sf, "..") || strings.HasPrefix(sf, "/") {
-			return fmt.Errorf("invalid sidecar filename: %s", sf)
-		}
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.busy {
-		return fmt.Errorf("download already in progress: %s", d.active)
-	}
-
-	// All files go to modelsDir/org/repo/ (preserves HF subpath structure).
-	repoDir := filepath.Join(d.cfg.ModelsDir, filepath.FromSlash(repoID))
-
-	jobs := make([]downloadJob, 0, len(filenames))
-	for _, filename := range filenames {
-		jobs = append(jobs, downloadJob{
-			filename: filename,
-			pattern:  shardPattern(filename),
-		})
-	}
-
+func buildDownloadLabel(repoID string, filenames []string, sidecarFiles []string) string {
 	label := fmt.Sprintf("%s — %s", repoID, filenames[0])
 	if len(filenames) > 1 {
 		label = fmt.Sprintf("%s — %d files", repoID, len(filenames))
@@ -86,7 +53,51 @@ func (d *downloader) start(repoID string, filenames []string, sidecarFiles []str
 			label += fmt.Sprintf(" + %d companion files", len(sidecarFiles))
 		}
 	}
+	return label
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// isDuplicateLocked returns true if the given repoID+filenames combo already
+// exists as the active download or anywhere in the queue. Must be called with
+// d.mu held.
+func (d *downloader) isDuplicateLocked(repoID string, filenames []string) bool {
+	if d.activeRepoID == repoID && slicesEqual(d.activeFilenames, filenames) {
+		return true
+	}
+	for _, e := range d.queue {
+		if e.repoID == repoID && slicesEqual(e.filenames, filenames) {
+			return true
+		}
+	}
+	return false
+}
+
+// startLocked arms the downloader for a new download and spawns the run
+// goroutine. Must be called with d.mu held; does NOT release the lock.
+func (d *downloader) startLocked(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, label string) {
+	repoDir := filepath.Join(d.cfg.ModelsDir, filepath.FromSlash(repoID))
+	jobs := make([]downloadJob, 0, len(filenames))
+	for _, filename := range filenames {
+		jobs = append(jobs, downloadJob{
+			filename: filename,
+			pattern:  shardPattern(filename),
+		})
+	}
+
 	d.active = label
+	d.activeRepoID = repoID
+	d.activeFilenames = append([]string(nil), filenames...)
 	d.busy = true
 	d.lines = nil
 	d.totalBytes = totalBytes
@@ -96,8 +107,87 @@ func (d *downloader) start(repoID string, filenames []string, sidecarFiles []str
 	d.cancel = cancelFn
 
 	log.Printf("download starting: repo=%s files=%v sidecars=%v", repoID, filenames, sidecarFiles)
-	go d.run(ctx, repoID, repoDir, jobs, sidecarFiles)
-	return nil
+	go d.run(ctx, repoID, repoDir, jobs, append([]string(nil), sidecarFiles...))
+}
+
+// start enqueues or immediately begins a download.
+// Returns (queued=true) if the request was added to the queue (or was already
+// present), (queued=false) if it started executing right away.
+func (d *downloader) start(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, _ bool) (bool, error) {
+	if len(filenames) == 0 {
+		return false, fmt.Errorf("at least one filename is required")
+	}
+	for _, filename := range filenames {
+		if strings.Contains(filename, "..") || strings.HasPrefix(filename, "/") {
+			return false, fmt.Errorf("invalid filename: %s", filename)
+		}
+	}
+	for _, sf := range sidecarFiles {
+		if strings.Contains(sf, "..") || strings.HasPrefix(sf, "/") {
+			return false, fmt.Errorf("invalid sidecar filename: %s", sf)
+		}
+	}
+
+	label := buildDownloadLabel(repoID, filenames, sidecarFiles)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.busy {
+		if d.isDuplicateLocked(repoID, filenames) {
+			return true, nil // already present; silently accept
+		}
+		d.nextID++
+		d.queue = append(d.queue, queueEntry{
+			id:           d.nextID,
+			repoID:       repoID,
+			filenames:    append([]string(nil), filenames...),
+			sidecarFiles: append([]string(nil), sidecarFiles...),
+			totalBytes:   totalBytes,
+			label:        label,
+		})
+		d.queueVer++
+		log.Printf("download enqueued (position %d): repo=%s files=%v", len(d.queue), repoID, filenames)
+		return true, nil
+	}
+
+	d.startLocked(repoID, filenames, sidecarFiles, totalBytes, label)
+	return false, nil
+}
+
+// advanceQueue atomically starts the next queued download or, when the queue
+// is empty, marks the downloader as idle. Must NOT be called with d.mu held.
+func (d *downloader) advanceQueue() {
+	d.mu.Lock()
+	if len(d.queue) == 0 {
+		d.busy = false
+		d.cancel = nil
+		d.progress = nil
+		d.activeRepoID = ""
+		d.activeFilenames = nil
+		d.queueVer++
+		d.mu.Unlock()
+		return
+	}
+	next := d.queue[0]
+	d.queue = d.queue[1:]
+	d.queueVer++
+	d.active = next.label
+	d.activeRepoID = next.repoID
+	d.activeFilenames = append([]string(nil), next.filenames...)
+	d.totalBytes = next.totalBytes
+	d.progress = nil
+	newCtx, cancelFn := context.WithCancel(context.Background())
+	d.cancel = cancelFn
+	d.mu.Unlock()
+
+	repoDir := filepath.Join(d.cfg.ModelsDir, filepath.FromSlash(next.repoID))
+	jobs := make([]downloadJob, 0, len(next.filenames))
+	for _, f := range next.filenames {
+		jobs = append(jobs, downloadJob{filename: f, pattern: shardPattern(f)})
+	}
+	d.appendLine(fmt.Sprintf("[w84ggufman] next in queue: %s", next.label))
+	go d.run(newCtx, next.repoID, repoDir, jobs, next.sidecarFiles)
 }
 
 // runHFCommand executes a single `hf` subprocess, streaming output to d.lines.
@@ -228,6 +318,10 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 				d.busy = false
 				d.cancel = nil
 				d.progress = nil
+				d.queue = nil
+				d.queueVer++
+				d.activeRepoID = ""
+				d.activeFilenames = nil
 				d.mu.Unlock()
 				return
 			}
@@ -259,6 +353,10 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 				d.busy = false
 				d.cancel = nil
 				d.progress = nil
+				d.queue = nil
+				d.queueVer++
+				d.activeRepoID = ""
+				d.activeFilenames = nil
 				d.mu.Unlock()
 				return
 			}
@@ -269,19 +367,12 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 
 	// Note: config file registration (models.ini / config.yaml) is no longer
 	// automatic — the user manages it via the config editors.
-	// if err := writeModelMeta(repoDir, repoID); err != nil { ... }
-	// if err := d.preset.AddModel(...); err != nil { ... }
-	// if d.llamaSwap != nil { d.llamaSwap.AddModel(...) }
 
 	// Note: automatic service restart is no longer performed after download.
-	// if err := restartService(d.cfg.LlamaService); err != nil { ... }
 
 	log.Printf("download complete: %d file(s) from %s", len(jobs), repoID)
 	d.appendLine("[w84ggufman] download complete")
 
-	d.mu.Lock()
-	d.busy = false
-	d.cancel = nil
-	d.progress = nil
-	d.mu.Unlock()
+	// Atomically advance to next queued download, or go idle.
+	d.advanceQueue()
 }

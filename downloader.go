@@ -46,17 +46,32 @@ type downloadJob struct {
 	pattern  string // shardPattern(filename): glob for sharded, literal for single
 }
 
+// queueEntry holds a pending download request.
+type queueEntry struct {
+	id           int64
+	repoID       string
+	filenames    []string
+	sidecarFiles []string
+	totalBytes   int64
+	label        string
+}
+
 type downloader struct {
-	cfg        Config
-	preset     *presetManager
-	llamaSwap  *llamaSwapManager
-	mu         sync.Mutex
-	active     string
-	busy       bool
-	lines      []string
-	cancel     context.CancelFunc
-	totalBytes int64
-	progress   *progressInfo
+	cfg             Config
+	preset          *presetManager
+	llamaSwap       *llamaSwapManager
+	mu              sync.Mutex
+	active          string
+	activeRepoID    string   // repoID of the currently-running download (for dedup)
+	activeFilenames []string // filenames of the currently-running download (for dedup)
+	busy            bool
+	lines           []string
+	cancel          context.CancelFunc
+	totalBytes      int64
+	progress        *progressInfo
+	queue           []queueEntry // pending downloads
+	queueVer        int64        // incremented on any queue mutation; used by SSE for change detection
+	nextID          int64        // monotonic counter for queue entry IDs
 }
 
 func newDownloader(cfg Config, pm *presetManager, lsm *llamaSwapManager) *downloader {
@@ -84,6 +99,27 @@ func (d *downloader) appendLine(line string) {
 	d.mu.Unlock()
 }
 
+func (d *downloader) queueEntries() []queueEntry {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]queueEntry, len(d.queue))
+	copy(out, d.queue)
+	return out
+}
+
+func (d *downloader) removeFromQueue(id int64) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i, e := range d.queue {
+		if e.id == id {
+			d.queue = append(d.queue[:i], d.queue[i+1:]...)
+			d.queueVer++
+			return true
+		}
+	}
+	return false
+}
+
 func (d *downloader) finishWithError(err error) {
 	log.Printf("download error: %v", err)
 	d.mu.Lock()
@@ -91,5 +127,9 @@ func (d *downloader) finishWithError(err error) {
 	d.busy = false
 	d.cancel = nil
 	d.progress = nil
+	d.queue = nil
+	d.queueVer++
+	d.activeRepoID = ""
+	d.activeFilenames = nil
 	d.mu.Unlock()
 }

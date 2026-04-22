@@ -1,5 +1,7 @@
 // Status bar and log resize handling
 
+import { formatBytes } from './utils.js';
+
 export function appendLogLine(line) {
   const log = document.getElementById('status-log');
   const atBottom = log.scrollHeight - log.scrollTop <= log.clientHeight + 4;
@@ -25,6 +27,46 @@ export function toggleStatusBar() {
     const log = document.getElementById('status-log');
     log.scrollTop = log.scrollHeight;
   }
+}
+
+export function renderQueuePanel(entries) {
+  const panel = document.getElementById('queue-panel');
+  if (!panel) return;
+  if (!entries || entries.length === 0) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'queue-header';
+  header.textContent = `Queue — ${entries.length} pending`;
+  panel.appendChild(header);
+  entries.forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'queue-item';
+    const label = document.createElement('span');
+    label.className = 'queue-item-label';
+    label.textContent = entry.label;
+    row.appendChild(label);
+    if (entry.totalBytes > 0) {
+      const size = document.createElement('span');
+      size.className = 'queue-item-size';
+      size.textContent = formatBytes(entry.totalBytes);
+      row.appendChild(size);
+    }
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'queue-item-remove';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove from queue';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fetch(`/api/queue/${entry.id}`, { method: 'DELETE' });
+    });
+    row.appendChild(removeBtn);
+    panel.appendChild(row);
+  });
 }
 
 export function setupStatusBar() {

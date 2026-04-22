@@ -3,7 +3,7 @@
 import { clearErr, showErr, esc, formatBytes } from './utils.js';
 import { setStatusBar } from './status-bar.js';
 import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
-import { downloadInProgress, warnVramBytes, setRefreshDlBtnExport, startDownload } from './download.js';
+import { warnVramBytes, setRefreshDlBtnExport, startDownload } from './download.js';
 import { diskFreeBytes, llamaSwapEnabled } from './status-polling.js';
 import { openFullConfigModal } from './config-modal.js';
 import { fetchLocalModels } from './local-models.js';
@@ -423,15 +423,13 @@ function renderRepoInfo(repoId, info) {
   function refreshDlBtn() {
     const { toDl, toDlSidecars, toDel } = getActions();
     const hasChanges = toDl.length > 0 || toDlSidecars.length > 0 || toDel.length > 0;
-    dlBtn.disabled = downloadInProgress || !hasChanges;
+    dlBtn.disabled = !hasChanges;
     const parts = [];
     if (toDl.length + toDlSidecars.length > 0)
       parts.push((toDl.length + toDlSidecars.length) + ' to download');
     if (toDel.length > 0)
       parts.push(toDel.length + ' to delete');
-    hint.textContent = downloadInProgress
-      ? 'Download in progress…'
-      : (parts.length ? parts.join(', ') : 'No changes');
+    hint.textContent = parts.length ? parts.join(', ') : 'No changes';
   }
   setRefreshDlBtnExport(refreshDlBtn);
 
