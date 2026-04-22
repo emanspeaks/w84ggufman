@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/emanspeaks/w84ggufman/internal/llamaswap"
 	"gopkg.in/yaml.v3"
@@ -41,7 +42,13 @@ func (m *llamaSwapManager) loadW84Config() w84Config {
 }
 
 // defaultW84ConfigYAML is shown when no .w84ggufman.yaml file exists yet.
-const defaultW84ConfigYAML = `templates:
+const defaultW84ConfigYAML = `# ignore: override the default root-level ignore patterns (.cache, .w84ggufman*)
+# ignore:
+#   - ".cache"
+#   - ".w84ggufman*"
+#   - "mydir"
+
+templates:
   llm: |
     cmd: |
       ${llama-command-template}
@@ -67,13 +74,29 @@ const defaultW84ConfigYAML = `templates:
 
 func (m *llamaSwapManager) readW84ConfigRaw() (string, error) {
 	data, err := os.ReadFile(m.w84ConfigPath())
-	if os.IsNotExist(err) {
-		return defaultW84ConfigYAML, nil
+	if err == nil {
+		return string(data), nil
 	}
-	if err != nil {
+	if !os.IsNotExist(err) {
 		return "", err
 	}
-	return string(data), nil
+	// YAML absent: check if root JSON has ignore overrides so we can pre-populate
+	// them — otherwise they'd be silently shadowed the first time the user saves.
+	rootMeta := readModelMeta(m.modelsDir)
+	if len(rootMeta.Ignore) > 0 {
+		var sb strings.Builder
+		sb.WriteString("ignore:\n")
+		for _, p := range rootMeta.Ignore {
+			b, _ := yaml.Marshal(p)
+			sb.WriteString("  - ")
+			sb.WriteString(strings.TrimSuffix(string(b), "\n"))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(defaultW84ConfigYAML)
+		return sb.String(), nil
+	}
+	return defaultW84ConfigYAML, nil
 }
 
 func (m *llamaSwapManager) writeW84Config(body string) error {

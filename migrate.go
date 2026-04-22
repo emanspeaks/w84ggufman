@@ -181,7 +181,7 @@ func reorganizeRepoFiles(cfg Config, repoDir, repoID, hfToken string, pm *preset
 		if err != nil {
 			return nil
 		}
-		if fi.Name() == metaFilename || isIgnoredAbsolutePath(path, cfg, dirIgnoreCache) {
+		if fi.Name() == metaFilename || fi.Name() == metaFilenameYAML || isIgnoredAbsolutePath(path, cfg, dirIgnoreCache) {
 			if fi.IsDir() {
 				return filepath.SkipDir
 			}

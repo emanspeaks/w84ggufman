@@ -216,6 +216,19 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 	}
 	modelsRoot := filepath.Clean(s.cfg.ModelsDir)
 	fsSep := string(filepath.Separator)
+	isCovered := func(dir string) bool {
+		if _, ok := added[dir]; ok {
+			return true
+		}
+		// Also covered if an already-added card is an ancestor (e.g. repo dir
+		// contains this quant subdir).
+		for addedDir := range added {
+			if strings.HasPrefix(dir, addedDir+fsSep) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, e := range configEntries {
 		for _, cp := range e.paths {
 			cp = filepath.Clean(cp)
@@ -230,7 +243,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 			if dir == modelsRoot {
 				continue
 			}
-			if _, ok := added[dir]; ok {
+			if isCovered(dir) {
 				continue
 			}
 			added[dir] = struct{}{}
@@ -249,7 +262,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				ConfigAliases: configAliasesFor(dir),
 				InConfig:      true,
 				IsLocal:       isLocal,
-				SourceUnknown: repoID == "" && !isLocal,
+				SourceUnknown: false,
 			})
 		}
 	}

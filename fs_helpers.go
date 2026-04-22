@@ -66,7 +66,7 @@ func scanFilesRelative(dir string) ([]string, int64) {
 		if err != nil || info.IsDir() {
 			return nil
 		}
-		if info.Name() == metaFilename {
+		if info.Name() == metaFilename || info.Name() == metaFilenameYAML {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)

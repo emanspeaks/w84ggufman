@@ -8,15 +8,18 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 const metaFilename = ".w84ggufman.json"
+const metaFilenameYAML = ".w84ggufman.yaml"
 
 type modelMeta struct {
-	RepoID     string   `json:"repoId"`
-	SkipHFSync bool     `json:"skip_hf_sync,omitempty"`
-	Ignore     []string `json:"ignore,omitempty"` // per-dir ignore patterns (replaces server defaults)
-	CtxSize    int      `json:"ctx_size,omitempty"`
+	RepoID     string   `json:"repoId"             yaml:"repoId"`
+	SkipHFSync bool     `json:"skip_hf_sync,omitempty" yaml:"skip_hf_sync,omitempty"`
+	Ignore     []string `json:"ignore,omitempty"   yaml:"ignore,omitempty"`
+	CtxSize    int      `json:"ctx_size,omitempty" yaml:"ctx_size,omitempty"`
 }
 
 func writeModelMeta(dir string, meta modelMeta) error {
@@ -25,6 +28,13 @@ func writeModelMeta(dir string, meta modelMeta) error {
 }
 
 func readModelMeta(dir string) modelMeta {
+	// Prefer YAML when present.
+	if data, err := os.ReadFile(filepath.Join(dir, metaFilenameYAML)); err == nil {
+		var m modelMeta
+		if yaml.Unmarshal(data, &m) == nil {
+			return m
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(dir, metaFilename))
 	if err != nil {
 		return modelMeta{}
