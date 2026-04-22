@@ -147,10 +147,14 @@ export async function browseRepo() {
   results.innerHTML = '<p class="msg-loading">Fetching file list…</p>';
   import('./readme.js').then(mod => mod.fetchAndRenderReadme(repoId));
   try {
-    const resp = await fetch('/api/repo?id=' + encodeURIComponent(repoId));
-    if (!resp.ok) throw new Error(await resp.text());
-    const info = await resp.json();
-    renderRepoInfo(repoId, info);
+    const [repoResp, cfgResp] = await Promise.all([
+      fetch('/api/repo?id=' + encodeURIComponent(repoId)),
+      fetch('/api/model-config?id=' + encodeURIComponent(repoId)).catch(() => null),
+    ]);
+    if (!repoResp.ok) throw new Error(await repoResp.text());
+    const info = await repoResp.json();
+    const kvConfig = cfgResp?.ok ? await cfgResp.json() : null;
+    renderRepoInfo(repoId, info, kvConfig);
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to fetch repo: ' + e.message);
@@ -164,10 +168,14 @@ export async function browseLocalPath(path, label) {
   const results = document.getElementById('repo-results');
   results.innerHTML = '<p class="msg-loading">Loading local files…</p>';
   try {
-    const resp = await fetch('/api/local-files?id=' + encodeURIComponent(path));
-    if (!resp.ok) throw new Error(await resp.text());
-    const info = await resp.json();
-    renderRepoInfo(path, info);
+    const [filesResp, cfgResp] = await Promise.all([
+      fetch('/api/local-files?id=' + encodeURIComponent(path)),
+      fetch('/api/model-config?id=' + encodeURIComponent(path)).catch(() => null),
+    ]);
+    if (!filesResp.ok) throw new Error(await filesResp.text());
+    const info = await filesResp.json();
+    const kvConfig = cfgResp?.ok ? await cfgResp.json() : null;
+    renderRepoInfo(path, info, kvConfig);
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to load: ' + e.message);
@@ -184,7 +192,74 @@ async function refreshCurrentRepoView() {
   await browseRepo();
 }
 
-function renderRepoInfo(repoId, info) {
+let ctxSaveTimer = null;
+
+function formatKVBytes(bytes) {
+  if (bytes <= 0) return '';
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GiB';
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MiB';
+  return (bytes / 1024).toFixed(0) + ' KiB';
+}
+
+function renderKVWidget(container, repoId, kvConfig) {
+  const { layers, kvHeads, headDim, ctxSize, globalCtx } = kvConfig;
+  const hasParams = layers > 0 && kvHeads > 0 && headDim > 0;
+  const initialCtx = ctxSize || globalCtx || 0;
+
+  const row = document.createElement('div');
+  row.className = 'kv-cache-row';
+
+  const label = document.createElement('label');
+  label.className = 'kv-cache-label';
+  label.textContent = 'Context window:';
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.className = 'kv-cache-input';
+  input.min = '512';
+  input.step = '512';
+  input.placeholder = globalCtx || '4096';
+  if (initialCtx) input.value = initialCtx;
+
+  const estimate = document.createElement('span');
+  estimate.className = 'kv-cache-estimate';
+
+  function updateEstimate() {
+    if (!hasParams) {
+      estimate.textContent = '';
+      return;
+    }
+    const ctx = parseInt(input.value, 10) || globalCtx || 0;
+    if (!ctx) {
+      estimate.textContent = '';
+      return;
+    }
+    const bytes = 2 * 2 * layers * kvHeads * headDim * ctx;
+    estimate.textContent = '≈ ' + formatKVBytes(bytes) + ' KV cache';
+  }
+
+  input.addEventListener('input', () => {
+    updateEstimate();
+    clearTimeout(ctxSaveTimer);
+    ctxSaveTimer = setTimeout(() => {
+      const val = parseInt(input.value, 10) || 0;
+      fetch('/api/model-meta?id=' + encodeURIComponent(repoId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ctxSize: val }),
+      }).catch(() => {});
+    }, 800);
+  });
+
+  updateEstimate();
+
+  label.appendChild(input);
+  row.appendChild(label);
+  row.appendChild(estimate);
+  container.appendChild(row);
+}
+
+function renderRepoInfo(repoId, info, kvConfig = null) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
   const sidecars = info.sidecars || [];
@@ -221,6 +296,8 @@ function renderRepoInfo(repoId, info) {
     }
     results.appendChild(hdr);
   }
+
+  if (kvConfig) renderKVWidget(results, repoId, kvConfig);
 
   const quantCbs = [];
   const sidecarCbs = [];

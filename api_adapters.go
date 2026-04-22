@@ -165,6 +165,7 @@ func toAPIModelMeta(meta modelMeta) internalapi.ModelMeta {
 		RepoID:     meta.RepoID,
 		SkipHFSync: meta.SkipHFSync,
 		Ignore:     append([]string(nil), meta.Ignore...),
+		CtxSize:    meta.CtxSize,
 	}
 }
 
@@ -173,6 +174,7 @@ func fromAPIModelMeta(meta internalapi.ModelMeta) modelMeta {
 		RepoID:     meta.RepoID,
 		SkipHFSync: meta.SkipHFSync,
 		Ignore:     append([]string(nil), meta.Ignore...),
+		CtxSize:    meta.CtxSize,
 	}
 }
 

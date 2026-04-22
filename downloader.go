@@ -16,6 +16,7 @@ type modelMeta struct {
 	RepoID     string   `json:"repoId"`
 	SkipHFSync bool     `json:"skip_hf_sync,omitempty"`
 	Ignore     []string `json:"ignore,omitempty"` // per-dir ignore patterns (replaces server defaults)
+	CtxSize    int      `json:"ctx_size,omitempty"`
 }
 
 func writeModelMeta(dir string, meta modelMeta) error {

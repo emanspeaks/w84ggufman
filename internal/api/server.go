@@ -26,6 +26,7 @@ type ModelMeta struct {
 	RepoID     string
 	SkipHFSync bool
 	Ignore     []string
+	CtxSize    int
 }
 
 type RepoFile struct {

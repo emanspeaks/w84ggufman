@@ -597,6 +597,27 @@ html.light .model-name-unknown { color: #94a3b8; }
 /* ── Rogue / unrecognized local files ────────────────────────────────────── */
 .rogue-row .rogue-name { color: #f87171; }
 html.light .rogue-row .rogue-name { color: #dc2626; }
+/* ── KV cache context widget ─────────────────────────────────────────────── */
+.kv-cache-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 6px 0 8px; flex-wrap: wrap;
+}
+.kv-cache-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.8rem; color: #94a3b8; white-space: nowrap;
+}
+.kv-cache-input {
+  width: 90px; padding: 3px 6px; border-radius: 4px;
+  border: 1px solid #334155; background: #1e293b; color: #f1f5f9;
+  font-size: 0.8rem; font-family: inherit;
+}
+.kv-cache-input:focus { outline: none; border-color: #60a5fa; }
+.kv-cache-estimate {
+  font-size: 0.78rem; color: #60a5fa; white-space: nowrap;
+}
+html.light .kv-cache-label { color: #64748b; }
+html.light .kv-cache-input { background: #f8fafc; border-color: #cbd5e1; color: #1e293b; }
+html.light .kv-cache-estimate { color: #2563eb; }
 /* ── Tags row ────────────────────────────────────────────────────────────── */
 .tags-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .badge-tag { background: #1e293b; color: #64748b; border: 1px solid #334155; font-weight: 400; }
