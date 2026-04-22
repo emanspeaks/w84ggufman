@@ -63,7 +63,7 @@ export function renderLocalModels(models) {
         }
         const title = a.loaded ? 'Currently loaded' : 'Configured but not loaded';
         const activeCls = a.loaded ? ' badge-active' : '';
-        return `<span class="badge ${cls}${activeCls}" title="${title}">${label}</span>`;
+        return `<span class="badge ${cls}${activeCls}" data-alias="${esc(a.name)}" title="${title}">${label}</span>`;
       }).join(' ');
     } else {
       loadedHtml = '<span class="badge badge-unloaded" title="Not referenced in config files and not currently loaded">Unused</span>';

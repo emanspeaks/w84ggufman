@@ -1,6 +1,6 @@
 // Status polling
 
-import { formatBytes, esc } from './utils.js';
+import { formatBytes } from './utils.js';
 import { setLlamaServiceLabel } from './service-restart.js';
 import { downloadInProgress, setDownloadState, openSSE, setWarnThresholds } from './download.js';
 
@@ -74,20 +74,13 @@ export async function pollStatus() {
       document.getElementById('vram-info').style.display = 'flex';
     }
     setWarnThresholds(s.warnDownloadBytes, s.warnVramBytes);
-    // Update loaded aliases on model cards without re-rendering
+    // Update loaded state on model card alias pills without re-rendering
     if (s.loadedModels) {
       const loadedSet = new Set(s.loadedModels);
-      document.querySelectorAll('.model-card[data-aliases]').forEach(card => {
-        const aliases = card.dataset.aliases ? card.dataset.aliases.split(',').filter(Boolean) : [];
-        const loadedRow = card.querySelector('.model-loaded-row');
-        if (!loadedRow) return;
-        const active = aliases.filter(a => loadedSet.has(a));
-        const inConfig = card.dataset.inConfig === '1';
-        loadedRow.innerHTML = active.length > 0
-          ? active.map(a => `<span class="badge badge-loaded">${esc(a)}</span>`).join(' ')
-          : (inConfig
-            ? '<span class="badge badge-configured" title="Referenced in config files but not currently loaded">Configured</span>'
-            : '<span class="badge badge-unloaded" title="Not referenced in config files and not currently loaded">Unused</span>');
+      document.querySelectorAll('.model-loaded-row .badge[data-alias]').forEach(pill => {
+        const active = loadedSet.has(pill.dataset.alias);
+        pill.classList.toggle('badge-active', active);
+        pill.title = active ? 'Currently loaded' : 'Configured but not loaded';
       });
     }
     if (s.downloadInProgress && !document.getElementById('dl-progress-fill')) {

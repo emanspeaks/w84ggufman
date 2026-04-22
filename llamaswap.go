@@ -26,16 +26,6 @@ type w84Config struct {
 	Templates map[string]string `yaml:"templates,omitempty"`
 }
 
-func (c w84Config) templateFor(modelType string) string {
-	if t := c.Templates[modelType]; t != "" {
-		return t
-	}
-	if modelType == "sd" {
-		return llamaswap.DefaultSDBody
-	}
-	return llamaswap.DefaultLLMBody
-}
-
 func (m *llamaSwapManager) w84ConfigPath() string {
 	return filepath.Join(m.modelsDir, ".w84ggufman.yaml")
 }
