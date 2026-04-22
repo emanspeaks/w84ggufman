@@ -198,6 +198,53 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Second pass: surface config-referenced dirs that were skipped by the
+	// filesystem scan (empty dirs, dirs with no displayable files, paths that
+	// exist only in config and haven't been downloaded yet).
+	added := make(map[string]struct{}, len(models))
+	for _, m := range models {
+		added[filepath.Clean(m.Path)] = struct{}{}
+	}
+	modelsRoot := filepath.Clean(s.cfg.ModelsDir)
+	fsSep := string(filepath.Separator)
+	for _, e := range configEntries {
+		for _, cp := range e.paths {
+			cp = filepath.Clean(cp)
+			if !strings.HasPrefix(cp, modelsRoot+fsSep) {
+				continue
+			}
+			dir := cp
+			if fi, err := os.Stat(cp); err != nil || !fi.IsDir() {
+				dir = filepath.Dir(cp)
+			}
+			dir = filepath.Clean(dir)
+			if dir == modelsRoot {
+				continue
+			}
+			if _, ok := added[dir]; ok {
+				continue
+			}
+			added[dir] = struct{}{}
+			repoID := ""
+			isLocal := false
+			if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+				meta := s.deps.ReadModelMeta(dir)
+				repoID = meta.RepoID
+				isLocal = meta.SkipHFSync
+			}
+			models = append(models, localModel{
+				RepoID:        repoID,
+				Path:          dir,
+				Files:         []string{},
+				SizeBytes:     0,
+				LoadedAliases: loadedAliasesFor(dir),
+				InConfig:      true,
+				IsLocal:       isLocal,
+				SourceUnknown: repoID == "" && !isLocal,
+			})
+		}
+	}
+
 	writeJSON(w, models)
 }
 

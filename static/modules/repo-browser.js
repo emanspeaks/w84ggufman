@@ -297,7 +297,7 @@ function renderRepoInfo(repoId, info, kvConfig = null) {
     results.appendChild(hdr);
   }
 
-  if (kvConfig) renderKVWidget(results, repoId, kvConfig);
+  if (kvConfig && kvConfig.layers > 0 && kvConfig.kvHeads > 0 && kvConfig.headDim > 0) renderKVWidget(results, repoId, kvConfig);
 
   const quantCbs = [];
   const sidecarCbs = [];

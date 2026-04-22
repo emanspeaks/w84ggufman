@@ -57,7 +57,7 @@ export function renderLocalModels(models) {
       <div class="model-meta">
         <span class="${titleClass}">${esc(titleText)}${badges.length ? ' ' + badges.join(' ') : ''}</span>
         <span class="model-detail">
-          ${esc(formatBytes(m.sizeBytes))} &middot; ${m.files.length} file${m.files.length !== 1 ? 's' : ''}
+          ${m.files.length === 0 && m.inConfig ? 'not downloaded' : esc(formatBytes(m.sizeBytes)) + ' &middot; ' + m.files.length + ' file' + (m.files.length !== 1 ? 's' : '')}
         </span>
         <span class="model-loaded-row">${loadedHtml}</span>
       </div>
