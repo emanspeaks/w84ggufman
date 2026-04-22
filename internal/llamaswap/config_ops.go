@@ -331,6 +331,7 @@ func buildModelBody(name, modelPath, mmprojPath, vaePath string, sd bool, tpl Te
 // in place, preserving their position.
 func upsertModelEntry(lines []string, name, body string, sd bool) []string {
 	bodyLines := indentBlock(splitYamlLines(body), indentModelBody)
+	bodyLines = append(bodyLines, "") // blank separator after each model entry
 	header := strings.Repeat(" ", indentModelName) + name + ":"
 
 	modelsStart, modelsEnd, ns, ne := findModelBlock(lines, name)
