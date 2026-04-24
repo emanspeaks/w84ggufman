@@ -78,6 +78,7 @@ export async function pollStatus() {
     if (s.loadedModels) {
       const loadedSet = new Set(s.loadedModels);
       document.querySelectorAll('.model-loaded-row .badge[data-alias]').forEach(pill => {
+        if (pill.dataset.missing) return;
         const active = loadedSet.has(pill.dataset.alias);
         pill.classList.toggle('badge-active', active);
         pill.title = active ? 'Currently loaded' : 'Configured but not loaded';

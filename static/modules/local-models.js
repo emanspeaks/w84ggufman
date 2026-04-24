@@ -51,20 +51,27 @@ export function renderLocalModels(models) {
     if (configAliases.length > 0) {
       loadedHtml = configAliases.map(a => {
         const groups = a.groups || [];
-        let cls, label;
-        if (groups.length === 0) {
+        let cls, label, title, extraAttrs = '';
+        if (a.missingFile) {
+          cls = 'badge-missing';
+          label = esc(a.name);
+          title = `Config references a file that doesn't exist: ${esc(a.missingFile)}`;
+          extraAttrs = ' data-missing="1"';
+        } else if (groups.length === 0) {
           cls = 'badge-group-none';
           label = esc(a.name);
+          title = a.loaded ? 'Currently loaded' : 'In config but not assigned to any group — model won\'t be routable until added to a group in config.yaml';
         } else if (groups.length === 1) {
           cls = 'badge-group-ok';
           label = `${esc(a.name)} [${esc(groups[0])}]`;
+          title = a.loaded ? 'Currently loaded' : 'Configured but not loaded';
         } else {
           cls = 'badge-group-multi';
           label = `${esc(a.name)} [${groups.map(g => esc(g)).join(', ')}]`;
+          title = a.loaded ? 'Currently loaded' : 'Configured but not loaded';
         }
-        const title = a.loaded ? 'Currently loaded' : 'Configured but not loaded';
-        const activeCls = a.loaded ? ' badge-active' : '';
-        return `<span class="badge ${cls}${activeCls}" data-alias="${esc(a.name)}" title="${title}">${label}</span>`;
+        const activeCls = (!a.missingFile && a.loaded) ? ' badge-active' : '';
+        return `<span class="badge ${cls}${activeCls}" data-alias="${esc(a.name)}"${extraAttrs} title="${title}">${label}</span>`;
       }).join(' ');
       if (unusedFiles.length > 0) {
         const unusedPills = unusedFiles.map(f => {

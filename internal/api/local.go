@@ -10,9 +10,10 @@ import (
 )
 
 type configAlias struct {
-	Name   string   `json:"name"`
-	Groups []string `json:"groups"`
-	Loaded bool     `json:"loaded"`
+	Name        string   `json:"name"`
+	Groups      []string `json:"groups"`
+	Loaded      bool     `json:"loaded"`
+	MissingFile string   `json:"missingFile,omitempty"`
 }
 
 type localModel struct {
@@ -112,7 +113,18 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				p := filepath.Clean(cp)
 				if p == rd || strings.HasPrefix(p, rd+sep) {
 					_, loaded := loadedModels[e.name]
-					aliases = append(aliases, configAlias{Name: e.name, Groups: e.groups, Loaded: loaded})
+					// Check all specific-file paths under this repo dir for existence.
+					missingFile := ""
+					for _, ep := range e.paths {
+						ep = filepath.Clean(ep)
+						if strings.HasPrefix(ep, rd+sep) {
+							if _, err := os.Stat(ep); os.IsNotExist(err) {
+								missingFile = filepath.Base(ep)
+								break
+							}
+						}
+					}
+					aliases = append(aliases, configAlias{Name: e.name, Groups: e.groups, Loaded: loaded, MissingFile: missingFile})
 					seen[e.name] = struct{}{}
 					break
 				}
@@ -146,6 +158,16 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// Build set of shard stems from referenced files so that all parts of a
+		// sharded set are treated as covered when any shard is in a config entry.
+		referencedShardStems := make(map[string]struct{})
+		for rel := range referencedRel {
+			base := filepath.Base(filepath.FromSlash(rel))
+			if shardRe.MatchString(base) {
+				stem := shardRe.ReplaceAllString(base, "")
+				referencedShardStems[stem] = struct{}{}
+			}
+		}
 		var unused []string
 		for _, f := range files {
 			base := filepath.Base(filepath.FromSlash(f))
@@ -155,9 +177,16 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 			if s.deps.MatchesMmproj(base) {
 				continue
 			}
-			if _, ok := referencedRel[f]; !ok {
-				unused = append(unused, f)
+			if _, ok := referencedRel[f]; ok {
+				continue
 			}
+			if shardRe.MatchString(base) {
+				stem := shardRe.ReplaceAllString(base, "")
+				if _, ok := referencedShardStems[stem]; ok {
+					continue
+				}
+			}
+			unused = append(unused, f)
 		}
 		return unused
 	}

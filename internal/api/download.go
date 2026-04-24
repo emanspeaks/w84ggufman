@@ -123,27 +123,57 @@ func (s *Server) HandleDeleteFiles(w http.ResponseWriter, r *http.Request) {
 	repoDir := filepath.Clean(filepath.Join(s.cfg.ModelsDir, filepath.FromSlash(req.RepoID)))
 	sep := string(filepath.Separator)
 
+	// Resolve the requested files and expand any shard sets so that all parts
+	// of a multi-part model are deleted together.
+	toDelete := make(map[string]struct{})
 	var errMsgs []string
 	for _, f := range req.Files {
 		if strings.Contains(f, "..") {
 			errMsgs = append(errMsgs, "invalid path: "+f)
 			continue
 		}
-		fullPath := filepath.Clean(filepath.Join(repoDir, filepath.FromSlash(f)))
-		if fullPath != repoDir && !strings.HasPrefix(fullPath, repoDir+sep) {
+		origFull := filepath.Clean(filepath.Join(repoDir, filepath.FromSlash(f)))
+		if origFull != repoDir && !strings.HasPrefix(origFull, repoDir+sep) {
 			errMsgs = append(errMsgs, "path traversal: "+f)
 			continue
 		}
+		base := filepath.Base(origFull)
+
+		if shardRe.MatchString(base) {
+			// For sharded files always expand using the directory from the original
+			// request path. Never fall back to findFileByBasename here — a basename
+			// search ignores directory context and would match the same shard number
+			// from a different quant's subdirectory (e.g. Q8_0/model-00002 instead
+			// of Q5_K_M/model-00002).
+			stem := shardRe.ReplaceAllString(base, "")
+			scanDir := filepath.Dir(origFull)
+			if entries, err := os.ReadDir(scanDir); err == nil {
+				for _, e := range entries {
+					if !e.IsDir() && shardRe.MatchString(e.Name()) {
+						if shardRe.ReplaceAllString(e.Name(), "") == stem {
+							toDelete[filepath.Join(scanDir, e.Name())] = struct{}{}
+						}
+					}
+				}
+			}
+			continue
+		}
+
+		// Non-shard: resolve and delete the single file.
+		fullPath := origFull
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			base := filepath.Base(fullPath)
 			fullPath = findFileByBasename(repoDir, base)
 		}
 		if fullPath == "" {
 			continue
 		}
+		toDelete[fullPath] = struct{}{}
+	}
+
+	for fullPath := range toDelete {
 		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 			log.Printf("warning: delete file %q: %v", fullPath, err)
-			errMsgs = append(errMsgs, f+": "+err.Error())
+			errMsgs = append(errMsgs, filepath.Base(fullPath)+": "+err.Error())
 		} else {
 			log.Printf("deleted file %q", fullPath)
 		}

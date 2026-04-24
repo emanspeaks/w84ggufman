@@ -121,6 +121,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .badge-group-ok    { background: #14532d; color: #86efac; }
 .badge-group-none  { background: #78350f; color: #fcd34d; }
 .badge-group-multi { background: #7f1d1d; color: #fca5a5; }
+.badge-missing     { background: #991b1b; color: #fecaca; }
 .badge-active { outline: 1px solid currentColor; outline-offset: -2px; }
 .model-actions { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; }
 /* ── Config modal ──────────────────────────────────────────────────────── */
@@ -417,6 +418,7 @@ html.light .badge-configured { background: #e4e4e7; color: #52525b; }
 html.light .badge-group-ok    { background: #dcfce7; color: #166534; }
 html.light .badge-group-none  { background: #fef3c7; color: #92400e; }
 html.light .badge-group-multi { background: #fee2e2; color: #991b1b; }
+html.light .badge-missing     { background: #fca5a5; color: #7f1d1d; }
 html.light .hint           { color: #94a3b8; }
 html.light .hint a         { color: #2563eb; }
 html.light .hint a:hover   { color: #1d4ed8; }
