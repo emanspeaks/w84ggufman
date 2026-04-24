@@ -249,6 +249,9 @@ func (d *downloader) runHFCommand(ctx context.Context, args []string) error {
 func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []downloadJob, sidecarFiles []string) {
 	d.appendLine(fmt.Sprintf("[w84ggufman] repo: %s", repoID))
 
+	// Capture bytes already on disk so progress reflects only new data.
+	baseline := dirSize(repoDir)
+
 	// Progress polling: measure repoDir as a whole.
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
@@ -265,7 +268,10 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 				return
 			}
 			now := time.Now()
-			cur := dirSize(repoDir)
+			cur := dirSize(repoDir) - baseline
+			if cur < 0 {
+				cur = 0
+			}
 			speed := int64(0)
 			if !lastMeasure.IsZero() {
 				dt := now.Sub(lastMeasure).Seconds()

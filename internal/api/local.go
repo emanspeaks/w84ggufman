@@ -21,6 +21,7 @@ type localModel struct {
 	Files         []string      `json:"files"`
 	SizeBytes     int64         `json:"sizeBytes"`
 	ConfigAliases []configAlias `json:"configAliases"`
+	UnusedFiles   []string      `json:"unusedFiles"`
 	InConfig      bool          `json:"inConfig"`
 	IsLocal       bool          `json:"isLocal"`
 	SourceUnknown bool          `json:"sourceUnknown"`
@@ -123,6 +124,44 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 		return aliases
 	}
 
+	// unusedFilesFor returns GGUF files (relative paths) in repoDir that are not
+	// referenced by any config entry. Returns nil when the config references the
+	// directory itself (we can't tell which file the server will pick).
+	unusedFilesFor := func(repoDir string, files []string) []string {
+		rd := filepath.Clean(repoDir)
+		sep := string(filepath.Separator)
+		referencedRel := make(map[string]struct{})
+		for _, e := range configEntries {
+			for _, cp := range e.paths {
+				p := filepath.Clean(cp)
+				if p == rd {
+					// Directory-level reference: server picks the file; can't tell which.
+					return nil
+				}
+				if strings.HasPrefix(p, rd+sep) {
+					rel, err := filepath.Rel(rd, p)
+					if err == nil {
+						referencedRel[filepath.ToSlash(rel)] = struct{}{}
+					}
+				}
+			}
+		}
+		var unused []string
+		for _, f := range files {
+			base := filepath.Base(filepath.FromSlash(f))
+			if !strings.HasSuffix(strings.ToLower(base), ".gguf") {
+				continue
+			}
+			if s.deps.MatchesMmproj(base) {
+				continue
+			}
+			if _, ok := referencedRel[f]; !ok {
+				unused = append(unused, f)
+			}
+		}
+		return unused
+	}
+
 	ignorePatterns := s.cfg.RootIgnorePatterns
 	if s.deps.EffectiveRootIgnorePattern != nil {
 		ignorePatterns = s.deps.EffectiveRootIgnorePattern(s.cfg)
@@ -162,6 +201,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 					Files:         files,
 					SizeBytes:     size,
 					ConfigAliases: configAliasesFor(repoDir),
+					UnusedFiles:   unusedFilesFor(repoDir, files),
 					InConfig:      inConfigFor(repoDir),
 					IsLocal:       meta.SkipHFSync,
 					SourceUnknown: false,
@@ -200,6 +240,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				Files:         files,
 				SizeBytes:     size,
 				ConfigAliases: configAliasesFor(dirPath),
+				UnusedFiles:   unusedFilesFor(dirPath, files),
 				InConfig:      inConfigFor(dirPath),
 				IsLocal:       meta.SkipHFSync,
 				SourceUnknown: sourceUnknown,
@@ -260,6 +301,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				Files:         []string{},
 				SizeBytes:     0,
 				ConfigAliases: configAliasesFor(dir),
+				UnusedFiles:   nil,
 				InConfig:      true,
 				IsLocal:       isLocal,
 				SourceUnknown: false,

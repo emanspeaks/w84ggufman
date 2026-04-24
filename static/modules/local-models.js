@@ -46,6 +46,7 @@ export function renderLocalModels(models) {
     if (m.sourceUnknown) badges.push(`<span class="badge badge-warn-preset">unknown source</span>`);
 
     const configAliases = m.configAliases || [];
+    const unusedFiles = m.unusedFiles || [];
     let loadedHtml;
     if (configAliases.length > 0) {
       loadedHtml = configAliases.map(a => {
@@ -65,6 +66,13 @@ export function renderLocalModels(models) {
         const activeCls = a.loaded ? ' badge-active' : '';
         return `<span class="badge ${cls}${activeCls}" data-alias="${esc(a.name)}" title="${title}">${label}</span>`;
       }).join(' ');
+      if (unusedFiles.length > 0) {
+        const unusedPills = unusedFiles.map(f => {
+          const filename = f.split('/').pop();
+          return `<span class="badge badge-unloaded" title="Not referenced in any config entry: ${esc(filename)}">Unused ${esc(filename)}</span>`;
+        }).join(' ');
+        loadedHtml += ' ' + unusedPills;
+      }
     } else {
       loadedHtml = '<span class="badge badge-unloaded" title="Not referenced in config files and not currently loaded">Unused</span>';
     }

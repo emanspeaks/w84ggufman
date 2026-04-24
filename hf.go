@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -174,6 +175,19 @@ func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 			info.Sidecars = append(info.Sidecars, f)
 		}
 	}
+
+	// Sort models deterministically — map iteration over subdirs is random in Go.
+	sort.Slice(info.Models, func(i, j int) bool {
+		ni := info.Models[i].DisplayName
+		if ni == "" {
+			ni = info.Models[i].Filename
+		}
+		nj := info.Models[j].DisplayName
+		if nj == "" {
+			nj = info.Models[j].Filename
+		}
+		return ni < nj
+	})
 
 	// Detect vision from companion files.
 	for _, s := range info.Sidecars {
