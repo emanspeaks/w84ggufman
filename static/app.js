@@ -11,7 +11,7 @@ import { setupStatusMenu } from './modules/status-menu.js';
 import { setupRestartButtons } from './modules/service-restart.js';
 import { setupRepoBrowser } from './modules/repo-browser.js';
 import { fetchLocalModels } from './modules/local-models.js';
-import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL } from './modules/status-polling.js';
+import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL, llamaServerURL } from './modules/status-polling.js';
 import { cancelDownload } from './modules/download.js';
 import { openFullConfigModal, openW84ConfigModal } from './modules/config-modal.js';
 import { openDiskTreemap } from './modules/disk-treemap.js';
@@ -36,6 +36,11 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
   pollStatus();
 });
 
+document.getElementById('open-server-btn').addEventListener('click', () => {
+  document.getElementById('status-menu').classList.remove('open');
+  if (llamaServerURL) window.open(llamaServerURL, '_blank', 'noopener');
+});
+
 document.getElementById('edit-config-btn').addEventListener('click', () => {
   openFullConfigModal(llamaSwapEnabled).catch(console.error);
 });
@@ -50,7 +55,7 @@ document.getElementById('disk-info').addEventListener('click', () => {
   openDiskTreemap().catch(console.error);
 });
 
-document.getElementById('vram-info').addEventListener('click', () => {
+document.getElementById('ram-info').addEventListener('click', () => {
   if (atopwebURL) window.open(atopwebURL, '_blank', 'noopener');
 });
 

@@ -12,8 +12,8 @@ type Config struct {
 	Port                    int
 	HFToken                 string
 	WarnDownloadGiB         float64
-	VramGiB                 float64
-	WarnVramPercent         float64
+	RamGiB                  float64
+	WarnRamPercent          float64
 	SelfService             string
 	AtopwebURL              string
 	ForceRestartOnLlamaSwap bool
@@ -25,7 +25,6 @@ type ModelMeta struct {
 	RepoID     string
 	SkipHFSync bool
 	Ignore     []string
-	CtxSize    int
 }
 
 type RepoFile struct {
@@ -106,8 +105,6 @@ type Dependencies struct {
 	Preset     PresetManager
 	LlamaSwap  LlamaSwapManager
 
-	DetectVRAMBytes            func() uint64
-	DetectVRAMUsedBytes        func(llamaService string) (uint64, bool)
 	RestartService             func(service string) error
 	RemoveAllWritable          func(path string) error
 	IsOrgDir                   func(dir string) bool
@@ -129,15 +126,10 @@ type Server struct {
 	preset    PresetManager
 	llamaSwap LlamaSwapManager
 	deps      Dependencies
-	vramBytes uint64
 }
 
 func NewServer(cfg Config, deps Dependencies) *Server {
-	vram := uint64(cfg.VramGiB * 1024 * 1024 * 1024)
-	if vram == 0 && deps.DetectVRAMBytes != nil {
-		vram = deps.DetectVRAMBytes()
-	}
-	return &Server{cfg: cfg, dl: deps.Downloader, preset: deps.Preset, llamaSwap: deps.LlamaSwap, deps: deps, vramBytes: vram}
+	return &Server{cfg: cfg, dl: deps.Downloader, preset: deps.Preset, llamaSwap: deps.LlamaSwap, deps: deps}
 }
 
 type diskInfo struct {

@@ -6,7 +6,7 @@ import { formatBytes, formatETA } from './utils.js';
 export let downloadInProgress = false;
 export let activeEventSource = null;
 export let warnDownloadBytes = 0;
-export let warnVramBytes = 0;
+export let warnRamBytes = 0;
 
 export function setDownloadState(inProgress) {
   downloadInProgress = inProgress;
@@ -14,9 +14,9 @@ export function setDownloadState(inProgress) {
   export_refreshDlBtn?.();
 }
 
-export function setWarnThresholds(downloadBytes, vramBytes) {
+export function setWarnThresholds(downloadBytes, ramBytes) {
   if (downloadBytes != null) warnDownloadBytes = downloadBytes;
-  if (vramBytes != null) warnVramBytes = vramBytes;
+  if (ramBytes != null) warnRamBytes = ramBytes;
 }
 
 let export_refreshDlBtn = null;
@@ -31,9 +31,9 @@ export async function startDownload(repoId, filenames, sidecarFiles, totalSize) 
     const gb = (totalSize / 1073741824).toFixed(2);
     if (!confirm(`This download is ${gb} GiB. Continue?`)) return;
   }
-  if (warnVramBytes > 0 && totalSize != null && totalSize > warnVramBytes) {
+  if (warnRamBytes > 0 && totalSize != null && totalSize > warnRamBytes) {
     const gib = (totalSize / (1024 ** 3)).toFixed(2);
-    if (!confirm(`This model (${gib} GiB) may exceed your VRAM limit. Continue anyway?`)) return;
+    if (!confirm(`This model (${gib} GiB) may exceed your RAM limit. Continue anyway?`)) return;
   }
   const body = { repoId, filenames, totalBytes: totalSize || 0 };
   if (sidecarFiles && sidecarFiles.length) body.sidecarFiles = sidecarFiles;

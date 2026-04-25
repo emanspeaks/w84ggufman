@@ -5,6 +5,26 @@ body {
   min-height: 100vh; padding-bottom: 36px;
   transition: background 0.2s, color 0.2s, padding-bottom 0.25s ease;
 }
+/* ── Version update banner ─────────────────────────────────────────────── */
+#version-banner {
+  position: sticky; top: 0; z-index: 2000;
+  background: #4a3000; color: #fbbf24;
+  padding: 0.5rem 1rem;
+  display: flex; align-items: center; gap: 1rem; justify-content: space-between;
+  font-size: 0.825rem; flex-shrink: 0;
+}
+#version-banner-msg { flex: 1; }
+#version-banner .banner-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+#version-banner-refresh {
+  background: #fbbf24; color: #1c1200; border: none;
+  padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
+}
+#version-banner-refresh:hover { background: #fcd34d; }
+#version-banner-dismiss {
+  background: none; color: #fbbf24; border: 1px solid #92400e;
+  padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; cursor: pointer;
+}
+#version-banner-dismiss:hover { background: rgba(251,191,36,0.1); }
 /* ── Header ──────────────────────────────────────────────────────────── */
 header {
   background: #020617; color: #f8fafc; padding: 0.75rem 1.5rem;
@@ -14,6 +34,16 @@ header {
 .header-title { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
 header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
 header h1 small { display: block; font-size: 0.6rem; font-weight: 400; opacity: 0.55; letter-spacing: 0.04em; }
+.github-link {
+  display: flex; align-items: center;
+  color: #475569; opacity: 0.7; text-decoration: none;
+  border-radius: 4px; padding: 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.github-link:hover { opacity: 1; color: #f1f5f9; }
+.github-link svg { fill: currentColor; display: block; }
+html.light .github-link { color: #94a3b8; }
+html.light .github-link:hover { color: #1e293b; }
 #app-version {
   font-size: 0.7rem; color: #475569;
   font-family: 'Menlo', 'Consolas', monospace;
@@ -124,52 +154,42 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .badge-missing     { background: #991b1b; color: #fecaca; }
 .badge-active { outline: 1px solid currentColor; outline-offset: -2px; }
 .model-actions { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; }
-/* ── Config modal ──────────────────────────────────────────────────────── */
-.modal-backdrop {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.65); backdrop-filter: blur(2px);
-  z-index: 500;
-  display: flex; align-items: flex-start; justify-content: center;
-  padding-top: 7vh; overflow: auto;
-}
-.modal {
+/* ── Editor panel (draggable, non-modal) ───────────────────────────────── */
+.editor-panel {
+  position: fixed;
+  width: min(720px, 95vw); height: 80vh;
+  min-width: 360px; min-height: 300px;
   background: #1e293b; border: 1px solid #334155; border-radius: 10px;
-  padding: 1.25rem 1.5rem 1.5rem;
-  width: min(700px, 92vw); height: min(560px, 82vh);
-  min-width: 320px; min-height: 240px;
-  max-width: 96vw; max-height: 92vh;
-  display: flex; flex-direction: column; gap: 0.875rem;
   box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+  display: flex; flex-direction: column;
   resize: both; overflow: hidden;
 }
-.modal-title { font-size: 0.95rem; font-weight: 600; color: #f1f5f9; }
-.modal-title small { display: block; font-size: 0.72rem; font-weight: 400; color: #64748b; margin-top: 2px; font-family: monospace; }
-.modal textarea {
-  flex: 1; min-height: 0;
-  background: #0f172a; border: 1px solid #334155; border-radius: 6px;
-  color: #e2e8f0; font-family: 'Menlo','Consolas',monospace; font-size: 0.825rem;
-  line-height: 1.5; padding: 0.75rem; resize: none; outline: none; overflow: auto;
+.editor-panel-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid #334155;
+  cursor: grab; user-select: none; flex-shrink: 0;
 }
-.modal textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
-.modal-groups { flex-shrink: 0; }
-.modal-groups-label { font-size: 0.72rem; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 5px; }
-.modal-groups-list { display: flex; flex-direction: column; gap: 4px; }
-.modal-group-row {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 0.825rem; cursor: pointer; user-select: none;
+.editor-panel-header:active { cursor: grabbing; }
+.editor-panel-title { flex: 1; font-size: 0.95rem; font-weight: 600; color: #f1f5f9; }
+.editor-panel-title small { display: block; font-size: 0.72rem; font-weight: 400; color: #64748b; margin-top: 2px; font-family: monospace; }
+.editor-panel-actions { display: flex; gap: 0.5rem; align-items: center; flex-shrink: 0; }
+.editor-close {
+  background: none; border: none; color: #64748b; cursor: pointer;
+  font-size: 1rem; padding: 2px 6px; border-radius: 4px; line-height: 1;
 }
-.modal-group-row input[type="checkbox"] { flex-shrink: 0; accent-color: #3b82f6; cursor: pointer; }
-.group-label-name { color: #e2e8f0; font-weight: 500; }
-.group-opts { color: #475569; font-size: 0.72rem; font-family: 'Menlo','Consolas',monospace; }
-html.light .modal-groups-label { color: #94a3b8; }
-html.light .group-label-name { color: #1e293b; }
-html.light .group-opts { color: #94a3b8; }
-.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; flex-shrink: 0; }
-html.light .modal { background: #f8fafc; border-color: #e2e8f0; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
-html.light .modal-title { color: #1e293b; }
-html.light .modal textarea { background: #fff; border-color: #cbd5e1; color: #0f172a; }
+.editor-close:hover { background: #334155; color: #f1f5f9; }
+.editor-cm-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.editor-cm-wrap .CodeMirror { flex: 1; height: 100%; font-family: 'Menlo','Consolas','Monaco',monospace; font-size: 0.85rem; line-height: 1.5; }
+.editor-cm-wrap .CodeMirror-scroll { height: 100%; }
+.editor-hint { padding: 0.5rem 1rem; font-size: 0.72rem; border-top: 1px solid #334155; overflow-y: auto; max-height: 140px; flex-shrink: 0; }
+html.light .editor-panel { background: #f8fafc; border-color: #e2e8f0; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+html.light .editor-panel-header { border-color: #e2e8f0; }
+html.light .editor-panel-title { color: #1e293b; }
+html.light .editor-hint { border-color: #e2e8f0; }
+html.light .editor-close { color: #94a3b8; }
+html.light .editor-close:hover { background: #e2e8f0; color: #1e293b; }
 /* ── Template editor sections ──────────────────────────────────────────────── */
-.modal-body { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 0.875rem; }
 .tpl-section { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
 .tpl-section + .tpl-section { padding-top: 0.75rem; border-top: 1px solid #334155; }
 .tpl-section-title { font-size: 0.8rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -250,8 +270,8 @@ input[type="text"]:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,
 .quant-tile:hover { border-color: #64748b; color: #e2e8f0; }
 .quant-tile.selected { border-color: #3b82f6; background: rgba(59,130,246,0.15); color: #93c5fd; }
 .quant-tile.toobig { border-color: #7f1d1d; color: #9b4444; cursor: default; opacity: 0.7; }
-.quant-tile.vramwarn { border-color: #92400e; }
-.quant-tile.vramwarn .quant-tile-size { color: #f59e0b; }
+.quant-tile.ramwarn { border-color: #92400e; }
+.quant-tile.ramwarn .quant-tile-size { color: #f59e0b; }
 .quant-tile-name { padding: 3px 6px; font-weight: 500; }
 .quant-tile-size {
   padding: 3px 6px; font-size: 0.62rem; color: #475569;
@@ -443,7 +463,7 @@ html.light #status-log     { border-top-color: #e2e8f0; color: #64748b; }
 html.light #status-bar-label { color: #94a3b8; border-right-color: #e2e8f0; }
 html.light #status-bar.active #status-bar-text { color: #0f172a; }
 html.light #status-bar-chevron { color: #cbd5e1; }
-/* ── Resource bars (disk + VRAM) ─────────────────────────────────────────── */
+/* ── Resource bars (disk + RAM) ──────────────────────────────────────────── */
 .resource-bars { display: flex; flex-direction: row; gap: 6px; flex-shrink: 0; }
 .resource-meter {
   display: flex; align-items: center; gap: 0.5rem;
@@ -463,8 +483,8 @@ html.light .resource-bar { background: #e2e8f0; }
 .resource-row { display: flex; align-items: center; gap: 0.5rem; }
 #disk-info { cursor: pointer; }
 #disk-info:hover { border-color: #3b82f6; }
-#vram-info.clickable { cursor: pointer; }
-#vram-info.clickable:hover { border-color: #3b82f6; }
+#ram-info.clickable { cursor: pointer; }
+#ram-info.clickable:hover { border-color: #3b82f6; }
 /* ── Disk usage treemap (non-modal floating dialog) ─────────────────────── */
 .disk-treemap-dialog {
   position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -606,27 +626,6 @@ html.light .model-name-unknown { color: #94a3b8; }
 /* ── Rogue / unrecognized local files ────────────────────────────────────── */
 .rogue-row .rogue-name { color: #f87171; }
 html.light .rogue-row .rogue-name { color: #dc2626; }
-/* ── KV cache context widget ─────────────────────────────────────────────── */
-.kv-cache-row {
-  display: flex; align-items: center; gap: 0.6rem;
-  padding: 6px 0 8px; flex-wrap: wrap;
-}
-.kv-cache-label {
-  display: flex; align-items: center; gap: 0.4rem;
-  font-size: 0.8rem; color: #94a3b8; white-space: nowrap;
-}
-.kv-cache-input {
-  width: 90px; padding: 3px 6px; border-radius: 4px;
-  border: 1px solid #334155; background: #1e293b; color: #f1f5f9;
-  font-size: 0.8rem; font-family: inherit;
-}
-.kv-cache-input:focus { outline: none; border-color: #60a5fa; }
-.kv-cache-estimate {
-  font-size: 0.78rem; color: #60a5fa; white-space: nowrap;
-}
-html.light .kv-cache-label { color: #64748b; }
-html.light .kv-cache-input { background: #f8fafc; border-color: #cbd5e1; color: #1e293b; }
-html.light .kv-cache-estimate { color: #2563eb; }
 /* ── Tags row ────────────────────────────────────────────────────────────── */
 .tags-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .badge-tag { background: #1e293b; color: #64748b; border: 1px solid #334155; font-weight: 400; }

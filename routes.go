@@ -21,8 +21,6 @@ func buildMux(srv *internalapi.Server, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("DELETE /api/local", srv.HandleDeleteRepo)
 	mux.HandleFunc("POST /api/local/delete-files", srv.HandleDeleteFiles)
 	mux.HandleFunc("GET /api/local-files", srv.HandleLocalFiles)
-	mux.HandleFunc("GET /api/model-config", srv.HandleGetModelConfig)
-	mux.HandleFunc("PATCH /api/model-meta", srv.HandlePatchModelMeta)
 	mux.HandleFunc("GET /api/status", srv.HandleStatus)
 	mux.HandleFunc("GET /api/disk-usage", srv.HandleDiskUsage)
 	mux.HandleFunc("POST /api/restart", srv.HandleRestart)

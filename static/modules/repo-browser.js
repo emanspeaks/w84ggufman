@@ -3,8 +3,8 @@
 import { clearErr, showErr, esc, formatBytes } from './utils.js';
 import { setStatusBar } from './status-bar.js';
 import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
-import { warnVramBytes, setRefreshDlBtnExport, startDownload } from './download.js';
-import { diskFreeBytes, llamaSwapEnabled } from './status-polling.js';
+import { setRefreshDlBtnExport, startDownload } from './download.js';
+import { diskFreeBytes, ramTotalBytes, llamaSwapEnabled } from './status-polling.js';
 import { openFullConfigModal } from './config-modal.js';
 import { fetchLocalModels } from './local-models.js';
 
@@ -147,14 +147,10 @@ export async function browseRepo() {
   results.innerHTML = '<p class="msg-loading">Fetching file list…</p>';
   import('./readme.js').then(mod => mod.fetchAndRenderReadme(repoId));
   try {
-    const [repoResp, cfgResp] = await Promise.all([
-      fetch('/api/repo?id=' + encodeURIComponent(repoId)),
-      fetch('/api/model-config?id=' + encodeURIComponent(repoId)).catch(() => null),
-    ]);
+    const repoResp = await fetch('/api/repo?id=' + encodeURIComponent(repoId));
     if (!repoResp.ok) throw new Error(await repoResp.text());
     const info = await repoResp.json();
-    const kvConfig = cfgResp?.ok ? await cfgResp.json() : null;
-    renderRepoInfo(repoId, info, kvConfig);
+    renderRepoInfo(repoId, info);
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to fetch repo: ' + e.message);
@@ -168,14 +164,10 @@ export async function browseLocalPath(path, label) {
   const results = document.getElementById('repo-results');
   results.innerHTML = '<p class="msg-loading">Loading local files…</p>';
   try {
-    const [filesResp, cfgResp] = await Promise.all([
-      fetch('/api/local-files?id=' + encodeURIComponent(path)),
-      fetch('/api/model-config?id=' + encodeURIComponent(path)).catch(() => null),
-    ]);
+    const filesResp = await fetch('/api/local-files?id=' + encodeURIComponent(path));
     if (!filesResp.ok) throw new Error(await filesResp.text());
     const info = await filesResp.json();
-    const kvConfig = cfgResp?.ok ? await cfgResp.json() : null;
-    renderRepoInfo(path, info, kvConfig);
+    renderRepoInfo(path, info);
   } catch (e) {
     results.innerHTML = '';
     showErr('repo-error', 'Failed to load: ' + e.message);
@@ -192,74 +184,7 @@ async function refreshCurrentRepoView() {
   await browseRepo();
 }
 
-let ctxSaveTimer = null;
-
-function formatKVBytes(bytes) {
-  if (bytes <= 0) return '';
-  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GiB';
-  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MiB';
-  return (bytes / 1024).toFixed(0) + ' KiB';
-}
-
-function renderKVWidget(container, repoId, kvConfig) {
-  const { layers, kvHeads, headDim, ctxSize, globalCtx } = kvConfig;
-  const hasParams = layers > 0 && kvHeads > 0 && headDim > 0;
-  const initialCtx = ctxSize || globalCtx || 0;
-
-  const row = document.createElement('div');
-  row.className = 'kv-cache-row';
-
-  const label = document.createElement('label');
-  label.className = 'kv-cache-label';
-  label.textContent = 'Context window:';
-
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.className = 'kv-cache-input';
-  input.min = '512';
-  input.step = '512';
-  input.placeholder = globalCtx || '4096';
-  if (initialCtx) input.value = initialCtx;
-
-  const estimate = document.createElement('span');
-  estimate.className = 'kv-cache-estimate';
-
-  function updateEstimate() {
-    if (!hasParams) {
-      estimate.textContent = '';
-      return;
-    }
-    const ctx = parseInt(input.value, 10) || globalCtx || 0;
-    if (!ctx) {
-      estimate.textContent = '';
-      return;
-    }
-    const bytes = 2 * 2 * layers * kvHeads * headDim * ctx;
-    estimate.textContent = '≈ ' + formatKVBytes(bytes) + ' KV cache';
-  }
-
-  input.addEventListener('input', () => {
-    updateEstimate();
-    clearTimeout(ctxSaveTimer);
-    ctxSaveTimer = setTimeout(() => {
-      const val = parseInt(input.value, 10) || 0;
-      fetch('/api/model-meta?id=' + encodeURIComponent(repoId), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ctxSize: val }),
-      }).catch(() => {});
-    }, 800);
-  });
-
-  updateEstimate();
-
-  label.appendChild(input);
-  row.appendChild(label);
-  row.appendChild(estimate);
-  container.appendChild(row);
-}
-
-function renderRepoInfo(repoId, info, kvConfig = null) {
+function renderRepoInfo(repoId, info) {
   const results = document.getElementById('repo-results');
   const files = info.models || [];
   const sidecars = info.sidecars || [];
@@ -296,8 +221,6 @@ function renderRepoInfo(repoId, info, kvConfig = null) {
     }
     results.appendChild(hdr);
   }
-
-  if (kvConfig && kvConfig.layers > 0 && kvConfig.kvHeads > 0 && kvConfig.headDim > 0) renderKVWidget(results, repoId, kvConfig);
 
   const quantCbs = [];
   const sidecarCbs = [];
@@ -346,13 +269,13 @@ function renderRepoInfo(repoId, info, kvConfig = null) {
 
       for (const { f, label } of group) {
         const isPresent = isPresentFile(f.filename, presentFiles);
-        const tooBig   = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
-        const vramWarn = warnVramBytes > 0 && f.size != null && f.size > warnVramBytes;
+        const tooBig  = diskFreeBytes > 0 && f.size != null && f.size > diskFreeBytes;
+        const ramWarn = ramTotalBytes > 0 && f.size != null && f.size > ramTotalBytes;
 
         const tile = document.createElement('label');
         tile.className = 'quant-tile' +
-          (tooBig   ? ' toobig'   : '') +
-          (vramWarn ? ' vramwarn' : '') +
+          (tooBig   ? ' toobig'  : '') +
+          (ramWarn  ? ' ramwarn' : '') +
           (isPresent ? ' present' : '');
         tile.title = f.filename;
         tile.addEventListener('contextmenu', (e) => showQuantContextMenu(e, f.filename, sidecars));
@@ -372,7 +295,7 @@ function renderRepoInfo(repoId, info, kvConfig = null) {
         nameSpan.textContent = label;
         const sizeSpan = document.createElement('span');
         sizeSpan.className = 'quant-tile-size';
-        sizeSpan.textContent = (vramWarn ? '⚠ ' : '') + formatBytes(f.size) + (isPresent ? ' ✓' : '');
+        sizeSpan.textContent = (ramWarn ? '⚠ ' : '') + formatBytes(f.size) + (isPresent ? ' ✓' : '');
         tile.appendChild(nameSpan);
         tile.appendChild(sizeSpan);
         tilesWrap.appendChild(tile);

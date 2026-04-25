@@ -150,8 +150,8 @@ func toAPIConfig(cfg Config) internalapi.Config {
 		Port:                    cfg.Port,
 		HFToken:                 cfg.HFToken,
 		WarnDownloadGiB:         cfg.WarnDownloadGiB,
-		VramGiB:                 cfg.VramGiB,
-		WarnVramPercent:         cfg.WarnVramPercent,
+		RamGiB:                  cfg.RamGiB,
+		WarnRamPercent:          cfg.WarnRamPercent,
 		SelfService:             cfg.SelfService,
 		AtopwebURL:              cfg.AtopwebURL,
 		ForceRestartOnLlamaSwap: cfg.ForceRestartOnLlamaSwap,
@@ -165,7 +165,6 @@ func toAPIModelMeta(meta modelMeta) internalapi.ModelMeta {
 		RepoID:     meta.RepoID,
 		SkipHFSync: meta.SkipHFSync,
 		Ignore:     append([]string(nil), meta.Ignore...),
-		CtxSize:    meta.CtxSize,
 	}
 }
 
@@ -174,7 +173,6 @@ func fromAPIModelMeta(meta internalapi.ModelMeta) modelMeta {
 		RepoID:     meta.RepoID,
 		SkipHFSync: meta.SkipHFSync,
 		Ignore:     append([]string(nil), meta.Ignore...),
-		CtxSize:    meta.CtxSize,
 	}
 }
 

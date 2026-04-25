@@ -6,14 +6,15 @@ import (
 	"strings"
 )
 
-func extractCmdPaths(cmd string, flags ...string) []string {
+// extractCmdPaths returns every value associated with any flag in cmd.
+// It collects both "--flag value" and "--flag=value" forms without requiring
+// a specific allowlist of flag names, so new flags like --llm are covered
+// automatically. Non-path values (port numbers, counts, etc.) are harmless
+// because the caller filters by whether the path is under the models dir.
+func extractCmdPaths(cmd string) []string {
 	cmd = strings.ReplaceAll(cmd, "\\\n", " ")
 	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
 	tokens := strings.Fields(cmd)
-	flagSet := make(map[string]struct{}, len(flags))
-	for _, f := range flags {
-		flagSet[f] = struct{}{}
-	}
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
 	add := func(p string) {
@@ -28,18 +29,13 @@ func extractCmdPaths(cmd string, flags ...string) []string {
 		out = append(out, p)
 	}
 	for i, t := range tokens {
-		if _, ok := flagSet[t]; ok {
-			if i+1 < len(tokens) {
-				add(tokens[i+1])
-			}
+		if !strings.HasPrefix(t, "-") {
 			continue
 		}
-		for _, f := range flags {
-			prefix := f + "="
-			if strings.HasPrefix(t, prefix) {
-				add(strings.TrimPrefix(t, prefix))
-				break
-			}
+		if idx := strings.Index(t, "="); idx != -1 {
+			add(t[idx+1:])
+		} else if i+1 < len(tokens) {
+			add(tokens[i+1])
 		}
 	}
 	return out

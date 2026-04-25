@@ -5,13 +5,16 @@ import { setLlamaServiceLabel } from './service-restart.js';
 import { downloadInProgress, setDownloadState, openSSE, setWarnThresholds } from './download.js';
 
 export let diskFreeBytes = 0;
+export let ramTotalBytes = 0;
 export let llamaSwapEnabled = false;
 export let atopwebURL = '';
+export let llamaServerURL = '';
 
-// Last successfully received GPU / VRAM values. Null = never received.
+// Last successfully received GPU / RAM values. Null = never received.
 // Kept across polls so a single probe failure doesn't flash the row away.
-let lastVramUsedBytes = null;
+let lastRamUsedBytes = null;
 let lastGpuPct = null;
+let initialVersion = null;
 
 export async function pollStatus() {
   try {
@@ -22,6 +25,10 @@ export async function pollStatus() {
     if (s.llamaServiceLabel) {
       setLlamaServiceLabel(s.llamaServiceLabel);
       document.getElementById('restart-btn').textContent = 'Restart ' + s.llamaServiceLabel;
+      document.getElementById('open-server-btn').textContent = 'Open ' + s.llamaServiceLabel + '…';
+    }
+    if (s.llamaServerURL != null) {
+      llamaServerURL = resolveConfigURL(s.llamaServerURL);
     }
     if (s.llamaSwapEnabled != null) {
       llamaSwapEnabled = s.llamaSwapEnabled;
@@ -32,10 +39,18 @@ export async function pollStatus() {
     if (s.version) {
       const ver = document.getElementById('app-version');
       if (!ver.textContent) ver.textContent = s.version;
+      if (initialVersion === null) {
+        initialVersion = s.version;
+      } else if (s.version !== initialVersion) {
+        const banner = document.getElementById('version-banner');
+        document.getElementById('version-banner-msg').textContent =
+          `w84ggufman updated on server: v${initialVersion} → v${s.version}. Refresh the page to run the new version.`;
+        banner.style.display = 'flex';
+      }
     }
     if (s.atopwebURL != null) {
-      atopwebURL = resolveAtopwebURL(s.atopwebURL);
-      document.getElementById('vram-info').classList.toggle('clickable', !!s.atopwebURL);
+      atopwebURL = resolveConfigURL(s.atopwebURL);
+      document.getElementById('ram-info').classList.toggle('clickable', !!s.atopwebURL);
     }
     if (s.disk && s.disk.totalBytes > 0) {
       diskFreeBytes = s.disk.freeBytes;
@@ -46,19 +61,20 @@ export async function pollStatus() {
       document.getElementById('disk-text').textContent = formatBytes(s.disk.freeBytes) + ' free';
       document.getElementById('disk-info').style.display = 'flex';
     }
-    if (s.vramBytes > 0) {
-      const fill = document.getElementById('vram-bar-fill');
-      const text = document.getElementById('vram-text');
-      if (s.vramUsedKnown) lastVramUsedBytes = s.vramUsedBytes;
-      if (lastVramUsedBytes !== null) {
-        const pct = Math.round(lastVramUsedBytes / s.vramBytes * 100);
+    if (s.ramTotalBytes > 0) {
+      ramTotalBytes = s.ramTotalBytes;
+      const fill = document.getElementById('ram-bar-fill');
+      const text = document.getElementById('ram-text');
+      if (s.ramKnown) lastRamUsedBytes = s.ramUsedBytes;
+      if (lastRamUsedBytes !== null) {
+        const pct = Math.round(lastRamUsedBytes / s.ramTotalBytes * 100);
         fill.style.width = pct + '%';
         fill.className = 'resource-bar-fill ' + (pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : 'ok');
-        text.textContent = 'VRAM: ' + formatBytes(lastVramUsedBytes) + ' / ' + formatBytes(s.vramBytes);
+        text.textContent = 'RAM: ' + formatBytes(lastRamUsedBytes) + ' / ' + formatBytes(s.ramTotalBytes);
       } else {
         fill.style.width = '0%';
         fill.className = 'resource-bar-fill ok';
-        text.textContent = 'VRAM: ? / ' + formatBytes(s.vramBytes);
+        text.textContent = 'RAM: ? / ' + formatBytes(s.ramTotalBytes);
       }
       const gpuRow = document.getElementById('gpu-row');
       if (s.gpuPctKnown) lastGpuPct = Math.round(s.gpuPct);
@@ -71,9 +87,9 @@ export async function pollStatus() {
       } else {
         gpuRow.style.display = 'none';
       }
-      document.getElementById('vram-info').style.display = 'flex';
+      document.getElementById('ram-info').style.display = 'flex';
     }
-    setWarnThresholds(s.warnDownloadBytes, s.warnVramBytes);
+    setWarnThresholds(s.warnDownloadBytes, s.warnRamBytes);
     // Update loaded state on model card alias pills without re-rendering
     if (s.loadedModels) {
       const loadedSet = new Set(s.loadedModels);
@@ -94,15 +110,23 @@ export async function pollStatus() {
 }
 
 export function setupStatusPolling() {
+  document.getElementById('version-banner-refresh').addEventListener('click', () => location.reload());
+  document.getElementById('version-banner-dismiss').addEventListener('click', () => {
+    document.getElementById('version-banner').style.display = 'none';
+  });
   setInterval(pollStatus, 5000);
 }
 
-function resolveAtopwebURL(configURL) {
-  if (!configURL) return '';
+// If the configured URL points at localhost, substitute the browser's hostname
+// so that remote clients reach the right machine. Non-localhost URLs are used as-is.
+function resolveConfigURL(url) {
+  if (!url) return '';
   try {
-    const u = new URL(configURL);
+    const u = new URL(url);
+    if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return url;
     return `${u.protocol}//${window.location.hostname}${u.port ? ':' + u.port : ''}${u.pathname === '/' ? '' : u.pathname}`;
   } catch (_) {
-    return configURL;
+    return url;
   }
 }
+

@@ -12,8 +12,8 @@ type Config struct {
 	Port                    int               `json:"port"`
 	HFToken                 string            `json:"hfToken"`
 	WarnDownloadGiB         float64           `json:"warnDownloadGiB"`
-	VramGiB                 float64           `json:"vramGiB"`         // 0 = auto-detect
-	WarnVramPercent         float64           `json:"warnVramPercent"` // % of VRAM; default 80
+	RamGiB                  float64           `json:"ramGiB"`          // manual RAM total override when atopweb unavailable; 0 = disabled
+	WarnRamPercent          float64           `json:"warnRamPercent"`  // % of RAM at which to warn on download; default 80
 	SelfService             string            `json:"selfService"`     // systemd unit for self-restart (empty = disabled)
 	AtopwebURL              string            `json:"atopwebURL"`      // base URL of atopweb GPU monitor; "" disables
 	PresetGlobal            map[string]string `json:"presetGlobal"`
@@ -31,8 +31,8 @@ func defaultConfig() Config {
 		Port:            9293,
 		HFToken:         "",
 		WarnDownloadGiB: 10.0,
-		VramGiB:         0,
-		WarnVramPercent: 80,
+		RamGiB:          0,
+		WarnRamPercent:  80,
 		SelfService:     "w84ggufman.service",
 		AtopwebURL:      "http://localhost:5899",
 		PresetGlobal: map[string]string{
