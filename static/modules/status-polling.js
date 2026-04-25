@@ -14,6 +14,7 @@ export let llamaServerURL = '';
 // Kept across polls so a single probe failure doesn't flash the row away.
 let lastRamUsedBytes = null;
 let lastGpuPct = null;
+let initialVersion = null;
 
 export async function pollStatus() {
   try {
@@ -38,6 +39,14 @@ export async function pollStatus() {
     if (s.version) {
       const ver = document.getElementById('app-version');
       if (!ver.textContent) ver.textContent = s.version;
+      if (initialVersion === null) {
+        initialVersion = s.version;
+      } else if (s.version !== initialVersion) {
+        const banner = document.getElementById('version-banner');
+        document.getElementById('version-banner-msg').textContent =
+          `w84ggufman updated on server: v${initialVersion} → v${s.version}. Refresh the page to run the new version.`;
+        banner.style.display = 'flex';
+      }
     }
     if (s.atopwebURL != null) {
       atopwebURL = resolveConfigURL(s.atopwebURL);
@@ -101,6 +110,10 @@ export async function pollStatus() {
 }
 
 export function setupStatusPolling() {
+  document.getElementById('version-banner-refresh').addEventListener('click', () => location.reload());
+  document.getElementById('version-banner-dismiss').addEventListener('click', () => {
+    document.getElementById('version-banner').style.display = 'none';
+  });
   setInterval(pollStatus, 5000);
 }
 

@@ -5,6 +5,26 @@ body {
   min-height: 100vh; padding-bottom: 36px;
   transition: background 0.2s, color 0.2s, padding-bottom 0.25s ease;
 }
+/* ── Version update banner ─────────────────────────────────────────────── */
+#version-banner {
+  position: sticky; top: 0; z-index: 2000;
+  background: #4a3000; color: #fbbf24;
+  padding: 0.5rem 1rem;
+  display: flex; align-items: center; gap: 1rem; justify-content: space-between;
+  font-size: 0.825rem; flex-shrink: 0;
+}
+#version-banner-msg { flex: 1; }
+#version-banner .banner-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+#version-banner-refresh {
+  background: #fbbf24; color: #1c1200; border: none;
+  padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
+}
+#version-banner-refresh:hover { background: #fcd34d; }
+#version-banner-dismiss {
+  background: none; color: #fbbf24; border: 1px solid #92400e;
+  padding: 3px 10px; border-radius: 4px; font-size: 0.8rem; cursor: pointer;
+}
+#version-banner-dismiss:hover { background: rgba(251,191,36,0.1); }
 /* ── Header ──────────────────────────────────────────────────────────── */
 header {
   background: #020617; color: #f8fafc; padding: 0.75rem 1.5rem;
