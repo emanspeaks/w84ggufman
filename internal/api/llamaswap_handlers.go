@@ -120,7 +120,24 @@ type addLlamaSwapModelRequest struct {
 }
 
 type addLlamaSwapModelResponse struct {
-	Name string `json:"name"`
+	Name       string `json:"name"`
+	EntryBlock string `json:"entryBlock"`
+	ModelType  string `json:"modelType"`
+}
+
+func buildEntryBlock(name, rawBody string) string {
+	var b strings.Builder
+	b.WriteString("  ")
+	b.WriteString(name)
+	b.WriteString(":\n")
+	for _, line := range strings.Split(rawBody, "\n") {
+		if strings.TrimSpace(line) != "" {
+			b.WriteString("    ")
+			b.WriteString(line)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func deriveModelName(filename string) string {
@@ -172,5 +189,14 @@ func (s *Server) HandleAddLlamaSwapModel(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "failed to add model: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, addLlamaSwapModelResponse{Name: name})
+	rawBody, _ := s.llamaSwap.ReadRaw(name)
+	modelType := req.ModelType
+	if modelType == "" {
+		modelType = "llm"
+	}
+	writeJSON(w, addLlamaSwapModelResponse{
+		Name:       name,
+		EntryBlock: buildEntryBlock(name, rawBody),
+		ModelType:  modelType,
+	})
 }

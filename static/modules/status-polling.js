@@ -9,6 +9,7 @@ export let ramTotalBytes = 0;
 export let llamaSwapEnabled = false;
 export let atopwebURL = '';
 export let llamaServerURL = '';
+export let llamaServerLandingPage = '/';
 
 // Last successfully received GPU / RAM values. Null = never received.
 // Kept across polls so a single probe failure doesn't flash the row away.
@@ -29,6 +30,9 @@ export async function pollStatus() {
     }
     if (s.llamaServerURL != null) {
       llamaServerURL = resolveConfigURL(s.llamaServerURL);
+    }
+    if (s.llamaServerLandingPage != null) {
+      llamaServerLandingPage = s.llamaServerLandingPage;
     }
     if (s.llamaSwapEnabled != null) {
       llamaSwapEnabled = s.llamaSwapEnabled;

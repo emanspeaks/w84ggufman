@@ -15,7 +15,8 @@ type Config struct {
 	RamGiB                  float64           `json:"ramGiB"`          // manual RAM total override when atopweb unavailable; 0 = disabled
 	WarnRamPercent          float64           `json:"warnRamPercent"`  // % of RAM at which to warn on download; default 80
 	SelfService             string            `json:"selfService"`     // systemd unit for self-restart (empty = disabled)
-	AtopwebURL              string            `json:"atopwebURL"`      // base URL of atopweb GPU monitor; "" disables
+	AtopwebURL              string            `json:"atopwebURL"`              // base URL of atopweb GPU monitor; "" disables
+	LlamaServerLandingPage  string            `json:"llamaServerLandingPage"`  // URL path opened by "Open server" button; default "/"
 	PresetGlobal            map[string]string `json:"presetGlobal"`
 	LlamaSwapConfig         string            `json:"llamaSwapConfig"`         // path to llama-swap config.yaml; empty = disabled
 	ForceRestartOnLlamaSwap bool              `json:"forceRestartOnLlamaSwap"` // restart service even when llama-swap hot-reload is active
@@ -34,7 +35,8 @@ func defaultConfig() Config {
 		RamGiB:          0,
 		WarnRamPercent:  80,
 		SelfService:     "w84ggufman.service",
-		AtopwebURL:      "http://localhost:5899",
+		AtopwebURL:             "http://localhost:5899",
+		LlamaServerLandingPage: "/",
 		PresetGlobal: map[string]string{
 			"ctx-size":     "65536",
 			"flash-attn":   "on",

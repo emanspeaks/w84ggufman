@@ -1,7 +1,9 @@
 agenix
 AMDGPUVRAM
 APUs
+atopweb
 Bavail
+bool
 btn-danger
 btn-primary
 btn-secondary
@@ -37,6 +39,7 @@ Menlo
 mlock
 mmproj
 Mmproj
+modelsDir
 monospace
 MXFP
 myhostname
@@ -45,6 +48,7 @@ nixos
 nixos-cfg
 nixpkgs
 nolint
+noopener
 nowrap
 numtide
 NVFP
@@ -70,10 +74,6 @@ toobig
 tqdm
 uapi
 unsloth
+Upsert
 vtype
 yuin
-
-modelsDir
-bool
-Upsert
-atopweb

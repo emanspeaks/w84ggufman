@@ -5,7 +5,7 @@ import { setStatusBar } from './status-bar.js';
 import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
 import { setRefreshDlBtnExport, startDownload } from './download.js';
 import { diskFreeBytes, ramTotalBytes, llamaSwapEnabled } from './status-polling.js';
-import { openFullConfigModal } from './config-modal.js';
+import { openFullConfigModal, injectModelEntry } from './config-modal.js';
 import { fetchLocalModels } from './local-models.js';
 
 export let currentRepoContext = null;
@@ -44,10 +44,12 @@ async function addLlamaSwapModelPreset(modelType, filename, sidecars) {
       body: JSON.stringify({ repoId, filename, mmprojFile, vaeFile, modelType }),
     });
     if (!resp.ok) throw new Error(await resp.text());
-    const { name } = await resp.json();
+    const { name, entryBlock, modelType } = await resp.json();
     setStatusBar('Ready', 'Added ' + name + ' to config.yaml', false);
     fetchLocalModels();
-    openFullConfigModal(true, name).catch(console.error);
+    if (!injectModelEntry('/api/llamaswap/config', entryBlock, modelType, name)) {
+      openFullConfigModal(true, name).catch(console.error);
+    }
   } catch (e) {
     setStatusBar('Error', 'Failed to add model: ' + e.message, false);
   }

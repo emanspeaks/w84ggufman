@@ -164,6 +164,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: flex; flex-direction: column;
   resize: both; overflow: hidden;
 }
+.editor-panel.maximized { resize: none; border-radius: 0; box-shadow: none; }
 .editor-panel-header {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.65rem 1rem;

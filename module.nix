@@ -17,7 +17,8 @@ let
     vramGiB           = cfg.vramGiB;
     warnVramPercent   = cfg.warnVramPercent;
     llamaSwapConfig   = cfg.llamaSwapConfig;
-    atopwebURL        = cfg.atopwebURL;
+    atopwebURL              = cfg.atopwebURL;
+    llamaServerLandingPage  = cfg.llamaServerLandingPage;
   });
 in {
   options.services.w84ggufman = {
@@ -106,6 +107,16 @@ in {
         whenever a model is downloaded or deleted; llama-swap reloads it
         automatically. The file must be writable by serviceUser or serviceGroup.
         Leave empty (the default) to disable llama-swap config management.
+      '';
+    };
+
+    llamaServerLandingPage = lib.mkOption {
+      type    = lib.types.str;
+      default = "/";
+      description = ''
+        URL path appended to llamaServerURL when the "Open server" button is clicked.
+        Defaults to "/" (server root). Set this to the specific path of your server's
+        web UI if it is not at the root. Example: "/ui/#/models" for llama-swap.
       '';
     };
 

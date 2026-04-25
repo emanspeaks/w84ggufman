@@ -16,6 +16,7 @@ type Config struct {
 	WarnRamPercent          float64
 	SelfService             string
 	AtopwebURL              string
+	LlamaServerLandingPage  string
 	ForceRestartOnLlamaSwap bool
 	ShowDotFiles            bool
 	RootIgnorePatterns      []string

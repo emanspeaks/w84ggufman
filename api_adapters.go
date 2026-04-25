@@ -154,6 +154,7 @@ func toAPIConfig(cfg Config) internalapi.Config {
 		WarnRamPercent:          cfg.WarnRamPercent,
 		SelfService:             cfg.SelfService,
 		AtopwebURL:              cfg.AtopwebURL,
+		LlamaServerLandingPage:  cfg.LlamaServerLandingPage,
 		ForceRestartOnLlamaSwap: cfg.ForceRestartOnLlamaSwap,
 		ShowDotFiles:            cfg.ShowDotFiles,
 		RootIgnorePatterns:      append([]string(nil), cfg.RootIgnorePatterns...),

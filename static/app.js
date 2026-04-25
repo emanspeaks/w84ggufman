@@ -11,7 +11,7 @@ import { setupStatusMenu } from './modules/status-menu.js';
 import { setupRestartButtons } from './modules/service-restart.js';
 import { setupRepoBrowser } from './modules/repo-browser.js';
 import { fetchLocalModels } from './modules/local-models.js';
-import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL, llamaServerURL } from './modules/status-polling.js';
+import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL, llamaServerURL, llamaServerLandingPage } from './modules/status-polling.js';
 import { cancelDownload } from './modules/download.js';
 import { openFullConfigModal, openW84ConfigModal } from './modules/config-modal.js';
 import { openDiskTreemap } from './modules/disk-treemap.js';
@@ -38,7 +38,7 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 
 document.getElementById('open-server-btn').addEventListener('click', () => {
   document.getElementById('status-menu').classList.remove('open');
-  if (llamaServerURL) window.open(llamaServerURL, '_blank', 'noopener');
+  if (llamaServerURL) window.open(llamaServerURL + llamaServerLandingPage, '_blank', 'noopener');
 });
 
 document.getElementById('edit-config-btn').addEventListener('click', () => {
