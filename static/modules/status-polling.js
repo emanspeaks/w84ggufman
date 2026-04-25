@@ -8,6 +8,7 @@ export let diskFreeBytes = 0;
 export let ramTotalBytes = 0;
 export let llamaSwapEnabled = false;
 export let atopwebURL = '';
+export let llamaServerURL = '';
 
 // Last successfully received GPU / RAM values. Null = never received.
 // Kept across polls so a single probe failure doesn't flash the row away.
@@ -23,6 +24,10 @@ export async function pollStatus() {
     if (s.llamaServiceLabel) {
       setLlamaServiceLabel(s.llamaServiceLabel);
       document.getElementById('restart-btn').textContent = 'Restart ' + s.llamaServiceLabel;
+      document.getElementById('open-server-btn').textContent = 'Open ' + s.llamaServiceLabel + '…';
+    }
+    if (s.llamaServerURL != null) {
+      llamaServerURL = resolveConfigURL(s.llamaServerURL);
     }
     if (s.llamaSwapEnabled != null) {
       llamaSwapEnabled = s.llamaSwapEnabled;
@@ -35,7 +40,7 @@ export async function pollStatus() {
       if (!ver.textContent) ver.textContent = s.version;
     }
     if (s.atopwebURL != null) {
-      atopwebURL = resolveAtopwebURL(s.atopwebURL);
+      atopwebURL = resolveConfigURL(s.atopwebURL);
       document.getElementById('ram-info').classList.toggle('clickable', !!s.atopwebURL);
     }
     if (s.disk && s.disk.totalBytes > 0) {
@@ -99,12 +104,16 @@ export function setupStatusPolling() {
   setInterval(pollStatus, 5000);
 }
 
-function resolveAtopwebURL(configURL) {
-  if (!configURL) return '';
+// If the configured URL points at localhost, substitute the browser's hostname
+// so that remote clients reach the right machine. Non-localhost URLs are used as-is.
+function resolveConfigURL(url) {
+  if (!url) return '';
   try {
-    const u = new URL(configURL);
+    const u = new URL(url);
+    if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return url;
     return `${u.protocol}//${window.location.hostname}${u.port ? ':' + u.port : ''}${u.pathname === '/' ? '' : u.pathname}`;
   } catch (_) {
-    return configURL;
+    return url;
   }
 }
+

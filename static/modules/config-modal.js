@@ -1,53 +1,112 @@
-// Config modal dialogs
+// Config editor panels
 
 import { setStatusBar } from './status-bar.js';
 import { esc } from './utils.js';
 import { fetchLocalModels } from './local-models.js';
 import { pollStatus } from './status-polling.js';
 
-export async function openRawEditModal({ title, subtitle, endpoint, placeholder, successMsg, selectName, hintHtml }) {
+let panelZ = 1100;
+
+async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectName, hintHtml, mode }) {
   let body = '';
   try {
     const resp = await fetch(endpoint);
     if (resp.ok) body = await resp.text();
   } catch (_) {}
 
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-title" id="modal-title">
-        ${esc(title)}${subtitle ? ' <small>' + esc(subtitle) + '</small>' : ''}
+  const panel = document.createElement('div');
+  panel.className = 'editor-panel';
+  panel.style.zIndex = ++panelZ;
+
+  panel.innerHTML = `
+    <div class="editor-panel-header">
+      <div class="editor-panel-title">
+        ${esc(title)}${subtitle ? '<small>' + esc(subtitle) + '</small>' : ''}
       </div>
-      <textarea spellcheck="false" placeholder="${esc(placeholder)}">${esc(body)}</textarea>
-      ${hintHtml || ''}
-      <div class="modal-actions">
-        <button class="btn-secondary" id="modal-cancel">Cancel</button>
-        <button class="btn-primary" id="modal-save">Save</button>
+      <div class="editor-panel-actions">
+        <button class="btn-secondary editor-cancel">Cancel</button>
+        <button class="btn-primary editor-save">Save</button>
+        <button class="editor-close" title="Close">✕</button>
       </div>
     </div>
+    <div class="editor-cm-wrap"></div>
+    ${hintHtml ? `<div class="editor-hint">${hintHtml}</div>` : ''}
   `;
 
-  const ta = backdrop.querySelector('textarea');
+  document.body.appendChild(panel);
 
-  function closeModal() {
-    document.body.removeChild(backdrop);
+  // Position: centered with stagger for multiple open panels
+  const stagger = (panelZ - 1101) % 5;
+  const pw = Math.min(720, window.innerWidth * 0.95);
+  panel.style.left = Math.max(0, (window.innerWidth - pw) / 2 + stagger * 24) + 'px';
+  panel.style.top = (60 + stagger * 24) + 'px';
+
+  // Bring to front on any click within panel
+  panel.addEventListener('mousedown', () => { panel.style.zIndex = ++panelZ; }, true);
+
+  // Draggable header
+  const header = panel.querySelector('.editor-panel-header');
+  header.addEventListener('mousedown', e => {
+    if (e.target.tagName === 'BUTTON') return;
+    e.preventDefault();
+    const ox = e.clientX - panel.offsetLeft;
+    const oy = e.clientY - panel.offsetTop;
+    function onMove(ev) {
+      panel.style.left = (ev.clientX - ox) + 'px';
+      panel.style.top = (ev.clientY - oy) + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  // CodeMirror
+  const isLight = document.documentElement.classList.contains('light');
+  const cmWrap = panel.querySelector('.editor-cm-wrap');
+  const cm = window.CodeMirror(cmWrap, {
+    value: body,
+    mode: mode || 'yaml',
+    theme: isLight ? 'eclipse' : 'dracula',
+    lineNumbers: true,
+    indentUnit: 2,
+    tabSize: 2,
+    indentWithTabs: false,
+    lineWrapping: true,
+    extraKeys: { 'Ctrl-S': () => save(), 'Cmd-S': () => save() },
+  });
+  cm.setSize(null, '100%');
+
+  // Refresh CodeMirror on panel resize
+  const ro = new ResizeObserver(() => cm.refresh());
+  ro.observe(panel);
+
+  // Sync CodeMirror theme when app theme toggles
+  const mo = new MutationObserver(() => {
+    cm.setOption('theme', document.documentElement.classList.contains('light') ? 'eclipse' : 'dracula');
+  });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+  function closePanel() {
+    ro.disconnect();
+    mo.disconnect();
+    document.body.removeChild(panel);
   }
 
-  backdrop.querySelector('#modal-cancel').addEventListener('click', closeModal);
-
-  backdrop.querySelector('#modal-save').addEventListener('click', async () => {
-    const saveBtn = backdrop.querySelector('#modal-save');
+  async function save() {
+    const saveBtn = panel.querySelector('.editor-save');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     try {
       const resp = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'text/plain' },
-        body: ta.value,
+        body: cm.getValue(),
       });
       if (!resp.ok) throw new Error(await resp.text());
-      closeModal();
+      closePanel();
       setStatusBar('Ready', successMsg, false);
       fetchLocalModels();
       pollStatus();
@@ -56,32 +115,34 @@ export async function openRawEditModal({ title, subtitle, endpoint, placeholder,
       saveBtn.disabled = false;
       saveBtn.textContent = 'Save';
     }
-  });
+  }
 
-  document.body.appendChild(backdrop);
-  ta.focus();
-  let cursorPos = 0;
+  panel.querySelector('.editor-cancel').addEventListener('click', closePanel);
+  panel.querySelector('.editor-close').addEventListener('click', closePanel);
+  panel.querySelector('.editor-save').addEventListener('click', save);
+
+  // Scroll to model section if selectName given
   if (selectName) {
     const re = new RegExp('^\\s{2}' + selectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':\\s*$', 'm');
-    const m = ta.value.match(re);
-    if (m) cursorPos = m.index;
+    const m = body.match(re);
+    if (m) {
+      const lineNum = body.slice(0, m.index).split('\n').length - 1;
+      cm.setCursor(lineNum, 0);
+      setTimeout(() => cm.scrollIntoView({ line: lineNum, ch: 0 }, 100), 50);
+    }
   }
-  ta.setSelectionRange(cursorPos, cursorPos);
-  if (cursorPos > 0) {
-    const lineHeight = parseInt(getComputedStyle(ta).lineHeight, 10) || 20;
-    const linesBefore = ta.value.slice(0, cursorPos).split('\n').length - 1;
-    ta.scrollTop = Math.max(0, linesBefore * lineHeight - ta.clientHeight / 3);
-  }
+
+  cm.focus();
 }
 
 export async function openW84ConfigModal() {
   document.getElementById('status-menu').classList.remove('open');
-  await openRawEditModal({
+  await openRawEditPanel({
     title: 'Edit W84 Config',
     subtitle: '.w84ggufman.yaml',
     endpoint: '/api/llamaswap/w84config',
-    placeholder: '',
     successMsg: '.w84ggufman.yaml saved',
+    mode: 'yaml',
     hintHtml: `<div class="tpl-ph-hint">
       <strong>Template placeholders</strong> — w84ggufman expands these when adding a model to config.yaml:<br>
       <code>{{MODEL_PATH}}</code> &mdash; absolute path to the model file<br>
@@ -99,10 +160,12 @@ export async function openFullConfigModal(llamaSwapEnabled, selectName) {
   const isSwap = llamaSwapEnabled;
   const endpoint = isSwap ? '/api/llamaswap/config' : '/api/preset/config';
   const filename = isSwap ? 'config.yaml' : 'models.ini';
-  await openRawEditModal({
-    title: 'Edit ' + filename, subtitle: null,
-    endpoint, placeholder: '',
+  await openRawEditPanel({
+    title: 'Edit ' + filename,
+    subtitle: null,
+    endpoint,
     successMsg: filename + ' saved',
     selectName,
+    mode: isSwap ? 'yaml' : 'properties',
   });
 }

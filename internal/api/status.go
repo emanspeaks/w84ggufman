@@ -21,6 +21,7 @@ type statusResponse struct {
 	LlamaSwapEnabled   bool         `json:"llamaSwapEnabled"`
 	LlamaServiceLabel  string       `json:"llamaServiceLabel"`
 	AtopwebURL         string       `json:"atopwebURL,omitempty"`
+	LlamaServerURL     string       `json:"llamaServerURL,omitempty"`
 	GpuPct             float64      `json:"gpuPct"`
 	GpuPctKnown        bool         `json:"gpuPctKnown"`
 	Queue              []QueueEntry `json:"queue"`
@@ -82,6 +83,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		LlamaSwapEnabled:   s.llamaSwap != nil,
 		LlamaServiceLabel:  strings.TrimSuffix(s.cfg.LlamaService, ".service"),
 		AtopwebURL:         s.cfg.AtopwebURL,
+		LlamaServerURL:     s.cfg.LlamaServerURL,
 		GpuPct:             gpuPct,
 		GpuPctKnown:        gpuPctKnown,
 		Queue:              s.dl.QueueEntries(),
