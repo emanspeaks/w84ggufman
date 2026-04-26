@@ -26,6 +26,7 @@ type statusResponse struct {
 	GpuPct             float64      `json:"gpuPct"`
 	GpuPctKnown        bool         `json:"gpuPctKnown"`
 	Queue              []QueueEntry `json:"queue"`
+	UpdatesAvailable   int          `json:"updatesAvailable"`
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -69,25 +70,30 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	warnRamBytes := uint64(float64(effectiveRamTotal) * warnRamPct / 100)
 
+	updatesAvailable := 0
+	if s.deps.PendingUpdateCount != nil {
+		updatesAvailable = s.deps.PendingUpdateCount()
+	}
 	writeJSON(w, statusResponse{
-		LlamaReachable:     reachable,
-		DownloadInProgress: inProgress,
-		ActiveDownload:     active,
-		Version:            s.deps.Version,
-		Disk:               disk,
-		WarnDownloadBytes:  warnBytes,
-		RamTotalBytes:      ramTotal,
-		RamUsedBytes:       ramUsed,
-		RamKnown:           ramKnown,
-		WarnRamBytes:       warnRamBytes,
-		LoadedModels:       loadedIDs,
-		LlamaSwapEnabled:   s.llamaSwap != nil,
-		LlamaServiceLabel:  strings.TrimSuffix(s.cfg.LlamaService, ".service"),
-		AtopwebURL:         s.cfg.AtopwebURL,
+		LlamaReachable:         reachable,
+		DownloadInProgress:     inProgress,
+		ActiveDownload:         active,
+		Version:                s.deps.Version,
+		Disk:                   disk,
+		WarnDownloadBytes:      warnBytes,
+		RamTotalBytes:          ramTotal,
+		RamUsedBytes:           ramUsed,
+		RamKnown:               ramKnown,
+		WarnRamBytes:           warnRamBytes,
+		LoadedModels:           loadedIDs,
+		LlamaSwapEnabled:       s.llamaSwap != nil,
+		LlamaServiceLabel:      strings.TrimSuffix(s.cfg.LlamaService, ".service"),
+		AtopwebURL:             s.cfg.AtopwebURL,
 		LlamaServerURL:         s.cfg.LlamaServerURL,
 		LlamaServerLandingPage: s.cfg.LlamaServerLandingPage,
-		GpuPct:             gpuPct,
-		GpuPctKnown:        gpuPctKnown,
-		Queue:              s.dl.QueueEntries(),
+		GpuPct:                 gpuPct,
+		GpuPctKnown:            gpuPctKnown,
+		Queue:                  s.dl.QueueEntries(),
+		UpdatesAvailable:       updatesAvailable,
 	})
 }

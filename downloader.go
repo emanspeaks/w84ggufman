@@ -67,11 +67,12 @@ type queueEntry struct {
 }
 
 type downloader struct {
-	cfg             Config
-	preset          *presetManager
-	llamaSwap       *llamaSwapManager
-	mu              sync.Mutex
-	active          string
+	cfg              Config
+	preset           *presetManager
+	llamaSwap        *llamaSwapManager
+	postDownloadHook func(repoID, repoDir string)
+	mu               sync.Mutex
+	active           string
 	activeRepoID    string   // repoID of the currently-running download (for dedup)
 	activeFilenames []string // filenames of the currently-running download (for dedup)
 	busy            bool

@@ -44,11 +44,20 @@ async function addLlamaSwapModelPreset(modelType, filename, sidecars) {
       body: JSON.stringify({ repoId, filename, mmprojFile, vaeFile, modelType }),
     });
     if (!resp.ok) throw new Error(await resp.text());
-    const { name, entryBlock, modelType } = await resp.json();
+    const data = await resp.json();
+    const name = data.name;
+    const entryBlock = data.entryBlock;
+    const resolvedType = data.modelType || modelType;
     setStatusBar('Ready', 'Added ' + name + ' to config.yaml', false);
     fetchLocalModels();
-    if (!injectModelEntry('/api/llamaswap/config', entryBlock, modelType, name)) {
-      openFullConfigModal(true, name).catch(console.error);
+    const injected = name && entryBlock
+      ? injectModelEntry('/api/llamaswap/config', entryBlock, resolvedType, name)
+      : false;
+    if (!injected) {
+      openFullConfigModal(true, name).catch(e => {
+        console.error(e);
+        setStatusBar('Error', 'Failed to open config editor: ' + e.message, false);
+      });
     }
   } catch (e) {
     setStatusBar('Error', 'Failed to add model: ' + e.message, false);
@@ -199,6 +208,38 @@ function renderRepoInfo(repoId, info) {
     return;
   }
   results.innerHTML = '';
+
+  if (info.hasUpdate && info.repoId) {
+    const updateBar = document.createElement('div');
+    updateBar.style.cssText = 'display:flex;align-items:center;gap:0.75rem;padding:6px 0 10px;';
+    const updateBtn = document.createElement('button');
+    updateBtn.className = 'update-repo-btn';
+    updateBtn.textContent = 'Update this repo';
+    updateBtn.addEventListener('click', async () => {
+      updateBtn.disabled = true;
+      updateBtn.textContent = 'Queuing…';
+      try {
+        const resp = await fetch('/api/updates/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoId: info.repoId }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        setStatusBar('Ready', 'Update queued for ' + info.repoId, false);
+        import('./local-models.js').then(m => m.fetchLocalModels());
+      } catch (e) {
+        setStatusBar('Error', 'Update failed: ' + e.message, false);
+        updateBtn.disabled = false;
+        updateBtn.textContent = 'Update this repo';
+      }
+    });
+    const label = document.createElement('span');
+    label.className = 'update-notice';
+    label.textContent = 'A newer version of this repo is available on HuggingFace.';
+    updateBar.appendChild(updateBtn);
+    updateBar.appendChild(label);
+    results.appendChild(updateBar);
+  }
 
   // Tags row
   const tagItems = [];

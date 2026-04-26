@@ -211,5 +211,7 @@ func (s *Server) HandleLocalFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	files, _ := s.deps.ScanFilesRelative(repoDir)
 	files = s.deps.FilterIgnoredRelativeFiles(repoDir, files, s.cfg)
-	writeJSON(w, &RepoInfo{LocalOnly: true, RogueFiles: files})
+	meta := s.deps.ReadModelMeta(repoDir)
+	hasUpdate := s.deps.HasUpdateAvailable != nil && s.deps.HasUpdateAvailable(repoDir)
+	writeJSON(w, &RepoInfo{LocalOnly: true, RogueFiles: files, HasUpdate: hasUpdate, RepoID: meta.RepoID})
 }

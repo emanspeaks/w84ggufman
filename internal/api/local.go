@@ -26,6 +26,7 @@ type localModel struct {
 	InConfig      bool          `json:"inConfig"`
 	IsLocal       bool          `json:"isLocal"`
 	SourceUnknown bool          `json:"sourceUnknown"`
+	HasUpdate     bool          `json:"hasUpdate,omitempty"`
 }
 
 type llamaModelsResponse struct {
@@ -234,6 +235,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 					InConfig:      inConfigFor(repoDir),
 					IsLocal:       meta.SkipHFSync,
 					SourceUnknown: false,
+					HasUpdate:     s.deps.HasUpdateAvailable != nil && s.deps.HasUpdateAvailable(repoDir),
 				})
 			}
 		} else {
@@ -273,6 +275,7 @@ func (s *Server) HandleLocal(w http.ResponseWriter, r *http.Request) {
 				InConfig:      inConfigFor(dirPath),
 				IsLocal:       meta.SkipHFSync,
 				SourceUnknown: sourceUnknown,
+				HasUpdate:     s.deps.HasUpdateAvailable != nil && s.deps.HasUpdateAvailable(dirPath),
 			})
 		}
 	}

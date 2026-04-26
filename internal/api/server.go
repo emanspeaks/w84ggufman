@@ -44,6 +44,8 @@ type RepoInfo struct {
 	PresentFiles []string   `json:"presentFiles"`
 	RogueFiles   []string   `json:"rogueFiles,omitempty"`
 	LocalOnly    bool       `json:"localOnly,omitempty"`
+	HasUpdate    bool       `json:"hasUpdate,omitempty"`
+	RepoID       string     `json:"repoId,omitempty"`
 }
 
 type PresetView struct {
@@ -118,6 +120,8 @@ type Dependencies struct {
 	DetectRepoIDFromGGUF       func(dir string, ggufFiles []string) string
 	FetchRepoInfo              func(repoID, token string) (*RepoInfo, error)
 	FilterIgnoredRelativeFiles func(repoDir string, files []string, cfg Config) []string
+	HasUpdateAvailable         func(dir string) bool
+	PendingUpdateCount         func() int
 	Version                    string
 }
 

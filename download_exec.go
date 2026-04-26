@@ -379,6 +379,10 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 	log.Printf("download complete: %d file(s) from %s", len(jobs), repoID)
 	d.appendLine("[w84ggufman] download complete")
 
+	if d.postDownloadHook != nil {
+		go d.postDownloadHook(repoID, repoDir)
+	}
+
 	// Atomically advance to next queued download, or go idle.
 	d.advanceQueue()
 }

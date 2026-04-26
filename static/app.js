@@ -51,6 +51,20 @@ document.getElementById('edit-templates-btn').addEventListener('click', () => {
 
 document.getElementById('cancel-dl-btn').addEventListener('click', cancelDownload);
 
+document.getElementById('updates-badge').addEventListener('click', async () => {
+  if (!confirm('Updates are available for one or more model repos.\n\nWould you like to update all outdated repos now? (Individual repos can be updated from the Select Models pane.)')) return;
+  try {
+    const resp = await fetch('/api/updates/apply', { method: 'POST' });
+    if (!resp.ok) throw new Error(await resp.text());
+    const { queued } = await resp.json();
+    import('./modules/status-bar.js').then(m => m.setStatusBar('Ready', `Queued updates for ${queued} repo${queued !== 1 ? 's' : ''}`, false));
+    fetchLocalModels();
+    pollStatus();
+  } catch (e) {
+    import('./modules/status-bar.js').then(m => m.setStatusBar('Error', 'Failed to queue updates: ' + e.message, false));
+  }
+});
+
 document.getElementById('disk-info').addEventListener('click', () => {
   openDiskTreemap().catch(console.error);
 });

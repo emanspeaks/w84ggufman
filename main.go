@@ -50,6 +50,8 @@ lsm := newLlamaSwapManager(cfg)
 migrateOldLayout(cfg, pm, lsm)
 reorganizeExistingLayout(cfg, pm, lsm)
 dl := newDownloader(cfg, pm, lsm)
+uc := newUpdateChecker(cfg)
+dl.postDownloadHook = uc.recordDownload
 var llamaSwapDep internalapi.LlamaSwapManager
 if lsm != nil {
 llamaSwapDep = llamaSwapAdapter{l: lsm}
@@ -88,6 +90,8 @@ cfgCopy.ShowDotFiles = c.ShowDotFiles
 cfgCopy.RootIgnorePatterns = append([]string(nil), c.RootIgnorePatterns...)
 return filterIgnoredRelativeFiles(repoDir, files, cfgCopy)
 },
+HasUpdateAvailable: uc.HasUpdateAvailable,
+PendingUpdateCount: uc.PendingUpdateCount,
 Version: version,
 })
 

@@ -110,6 +110,12 @@ export async function pollStatus() {
     } else if (!s.downloadInProgress && downloadInProgress) {
       setDownloadState(false);
     }
+    const badge = document.getElementById('updates-badge');
+    if (badge) {
+      const count = s.updatesAvailable || 0;
+      badge.style.display = count > 0 ? '' : 'none';
+      badge.textContent = count === 1 ? 'Update available' : `${count} updates available`;
+    }
   } catch (_) {}
 }
 

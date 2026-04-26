@@ -24,7 +24,7 @@ export function renderLocalModels(models) {
   list.innerHTML = '';
   for (const m of models) {
     const card = document.createElement('div');
-    card.className = 'model-card clickable';
+    card.className = 'model-card clickable' + (m.hasUpdate ? ' has-update' : '');
     card.dataset.aliases = (m.configAliases || []).filter(a => a.loaded).map(a => a.name).join(',');
     card.dataset.inConfig = m.inConfig ? '1' : '0';
 
@@ -42,6 +42,7 @@ export function renderLocalModels(models) {
     }
 
     const badges = [];
+    if (m.hasUpdate) badges.push(`<span class="badge badge-update">update available</span>`);
     if (m.isLocal) badges.push(`<span class="badge badge-local">local</span>`);
     if (m.sourceUnknown) badges.push(`<span class="badge badge-warn-preset">unknown source</span>`);
 

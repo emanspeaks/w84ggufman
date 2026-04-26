@@ -66,6 +66,33 @@ var quantInNameRe = regexp.MustCompile(`(?i)(?:^|[-_.])(?:UD-)?(?:IQ|TQ|BF|MXFP|
 // E.g.: "Llama-3-8B-Q4_K_M" → "Q4_K_M", "model-IQ4_XS" → "IQ4_XS".
 // var quantSuffixRe = regexp.MustCompile(`(?i)[-_]((?:UD-)?(?:IQ|TQ|BF|MXFP|NVFP|[QF])\d+\w*)$`)
 
+// fetchLatestSha returns the current HEAD commit sha of the HuggingFace repo.
+// This is used by the daily update checker to detect when a repo has new commits.
+func fetchLatestSha(repoID, token string) (string, error) {
+	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HuggingFace API returned %d", resp.StatusCode)
+	}
+	var m struct {
+		Sha string `json:"sha"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return "", err
+	}
+	return m.Sha, nil
+}
+
 func fetchRepoInfo(repoID, token string) (*HFRepoInfo, error) {
 	req, err := http.NewRequest("GET", "https://huggingface.co/api/models/"+repoID, nil)
 	if err != nil {

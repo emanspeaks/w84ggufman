@@ -180,9 +180,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 1rem; padding: 2px 6px; border-radius: 4px; line-height: 1;
 }
 .editor-close:hover { background: #334155; color: #f1f5f9; }
-.editor-cm-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-.editor-cm-wrap .CodeMirror { flex: 1; height: 100%; font-family: 'Menlo','Consolas','Monaco',monospace; font-size: 0.85rem; line-height: 1.5; }
-.editor-cm-wrap .CodeMirror-scroll { height: 100%; }
+.editor-cm-wrap { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+.editor-cm-wrap > .monaco-editor { position: absolute; inset: 0; }
 .editor-hint { padding: 0.5rem 1rem; font-size: 0.72rem; border-top: 1px solid #334155; overflow-y: auto; max-height: 140px; flex-shrink: 0; }
 html.light .editor-panel { background: #f8fafc; border-color: #e2e8f0; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
 html.light .editor-panel-header { border-color: #e2e8f0; }
@@ -637,6 +636,32 @@ html.light .badge-pipeline { background: #dbeafe; color: #1d4ed8; }
 .model-card.clickable { cursor: pointer; }
 .model-card.clickable:hover { border-color: #475569; }
 html.light .model-card.clickable:hover { border-color: #94a3b8; }
+/* ── Model update available ──────────────────────────────────────────────── */
+.model-card.has-update { border-color: #92400e; background: #1c110a; }
+.model-card.has-update.clickable:hover { border-color: #b45309; }
+html.light .model-card.has-update { border-color: #d97706; background: #fffbeb; }
+html.light .model-card.has-update.clickable:hover { border-color: #b45309; }
+.badge-update { background: #78350f; color: #fcd34d; }
+html.light .badge-update { background: #fef3c7; color: #92400e; }
+/* ── Updates badge in header ─────────────────────────────────────────────── */
+.updates-badge {
+  background: #fbbf24; color: #1c1200;
+  border: none; border-radius: 4px;
+  padding: 2px 8px; font-size: 0.72rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.updates-badge:hover { background: #fcd34d; }
+/* ── Update repo button in pane ──────────────────────────────────────────── */
+.update-repo-btn {
+  background: #fbbf24; color: #1c1200;
+  border: none; border-radius: 5px;
+  padding: 4px 10px; font-size: 0.8rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.update-repo-btn:hover { background: #fcd34d; }
+.update-repo-btn:disabled { opacity: 0.5; cursor: default; }
+.update-notice { font-size: 0.78rem; color: #fbbf24; }
+html.light .update-notice { color: #92400e; }
 /* ── README panel ────────────────────────────────────────────────────────── */
 .readme-body { padding-right: 4px; }
 .readme-content { font-size: 0.82rem; line-height: 1.65; color: #cbd5e1; }
