@@ -137,8 +137,13 @@ func (uc *updateChecker) checkAll() {
 		log.Printf("update-check: readdir %s: %v", uc.cfg.ModelsDir, err)
 		return
 	}
+	rootPatterns := effectiveRootIgnorePatterns(uc.cfg)
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		// Honour root-level ignore rules before touching anything.
+		if isIgnoredEntry(entry.Name(), rootPatterns, uc.cfg.ShowDotFiles, true) {
 			continue
 		}
 		dirPath := filepath.Join(uc.cfg.ModelsDir, entry.Name())
@@ -147,12 +152,13 @@ func (uc *updateChecker) checkAll() {
 			for _, sub := range subs {
 				if sub.IsDir() {
 					subPath := filepath.Join(dirPath, sub.Name())
-					uc.pruneIfEmpty(subPath)
-					uc.checkRepoDir(subPath)
+					if !uc.pruneIfEmpty(subPath) {
+						uc.checkRepoDir(subPath)
+					}
 				}
 			}
 			// Prune org dir itself if it's now empty.
-			if entries, _ := os.ReadDir(dirPath); len(entries) == 0 {
+			if remaining, _ := os.ReadDir(dirPath); len(remaining) == 0 {
 				if err := os.Remove(dirPath); err != nil {
 					log.Printf("update-check: remove empty org dir %q: %v", dirPath, err)
 				} else {
@@ -160,26 +166,28 @@ func (uc *updateChecker) checkAll() {
 				}
 			}
 		} else {
-			uc.pruneIfEmpty(dirPath)
-			uc.checkRepoDir(dirPath)
+			if !uc.pruneIfEmpty(dirPath) {
+				uc.checkRepoDir(dirPath)
+			}
 		}
 	}
 	log.Printf("update-check: done, %d repo(s) with updates available", uc.PendingUpdateCount())
 }
 
 // pruneIfEmpty removes a repo dir when it contains no real files after
-// applying ignore rules. This catches dirs left behind by partial deletions.
-func (uc *updateChecker) pruneIfEmpty(dir string) {
+// applying ignore rules. Returns true if the dir was removed.
+func (uc *updateChecker) pruneIfEmpty(dir string) bool {
 	files, _ := scanFilesRelative(dir)
 	files = filterIgnoredRelativeFiles(dir, files, uc.cfg)
 	if len(files) > 0 {
-		return
+		return false
 	}
 	if err := removeAllWritable(dir); err != nil {
 		log.Printf("update-check: remove empty repo dir %q: %v", dir, err)
-	} else {
-		log.Printf("update-check: removed empty repo dir %q", dir)
+		return false
 	}
+	log.Printf("update-check: removed empty repo dir %q", dir)
+	return true
 }
 
 func (uc *updateChecker) checkRepoDir(dir string) {
