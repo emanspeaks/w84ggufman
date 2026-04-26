@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -137,13 +138,38 @@ func (uc *updateChecker) checkRepoDir(dir string) {
 	}
 
 	meta := readModelMeta(dir)
-	if meta.RepoID == "" || meta.SkipHFSync {
+	if meta.SkipHFSync {
 		return
 	}
 
-	sha, err := fetchLatestSha(meta.RepoID, uc.cfg.HFToken)
+	repoID := meta.RepoID
+	if repoID == "" {
+		// Infer from directory path: <modelsDir>/author/model → "author/model".
+		if rel, err := filepath.Rel(uc.cfg.ModelsDir, cleanDir); err == nil {
+			rel = filepath.ToSlash(rel)
+			if strings.Count(rel, "/") == 1 {
+				repoID = rel
+			}
+		}
+	}
+	if repoID == "" {
+		// Final fallback: read repoID from GGUF file metadata.
+		entries, _ := os.ReadDir(dir)
+		var files []string
+		for _, ent := range entries {
+			if !ent.IsDir() {
+				files = append(files, ent.Name())
+			}
+		}
+		repoID = detectRepoIDFromGGUF(dir, files)
+	}
+	if repoID == "" {
+		return
+	}
+
+	sha, err := fetchLatestSha(repoID, uc.cfg.HFToken)
 	if err != nil {
-		log.Printf("update-check: %s: %v", meta.RepoID, err)
+		log.Printf("update-check: %s: %v", repoID, err)
 		return
 	}
 
@@ -162,6 +188,6 @@ func (uc *updateChecker) checkRepoDir(dir string) {
 	uc.counts[cleanDir] = hasUpdate
 	uc.mu.Unlock()
 	if hasUpdate {
-		log.Printf("update-check: update available for %s", meta.RepoID)
+		log.Printf("update-check: update available for %s", repoID)
 	}
 }
