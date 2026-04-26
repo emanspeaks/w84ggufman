@@ -48,7 +48,7 @@ export async function pollStatus() {
       } else if (s.version !== initialVersion) {
         const banner = document.getElementById('version-banner');
         document.getElementById('version-banner-msg').textContent =
-          `w84ggufman updated on server: v${initialVersion} → v${s.version}. Refresh the page to run the new version.`;
+          `w84ggufman updated on server: ${initialVersion} → ${s.version}. Refresh the page to run the new version.`;
         banner.style.display = 'flex';
       }
     }
@@ -139,4 +139,3 @@ function resolveConfigURL(url) {
     return url;
   }
 }
-
