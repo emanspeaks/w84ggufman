@@ -4,11 +4,200 @@ import { setStatusBar } from './status-bar.js';
 import { esc } from './utils.js';
 import { fetchLocalModels } from './local-models.js';
 import { pollStatus } from './status-polling.js';
+import { isPhoneViewport, readChromeOffsets, computeMaximizedBounds } from './ui-viewport.mjs';
 
 let panelZ = 1100;
 
 // Tracks open panels by endpoint so injectModelEntry can merge into a live editor.
 const openPanels = new Map(); // endpoint -> { editor, panel }
+
+function isIOSDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+// Test override for editor backend selection.
+// Priority: URL param > window flag > localStorage.
+// Supported values: monaco | cm6 | textarea.
+function getEditorBackendOverride() {
+  let urlVal = '';
+  try {
+    const qp = new URLSearchParams(window.location.search);
+    urlVal = (qp.get('editorBackend') || qp.get('forceEditorBackend') || '').trim().toLowerCase();
+  } catch (_) {}
+
+  let winVal = '';
+  try {
+    const raw = window.__W84_EDITOR_BACKEND__;
+    winVal = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  } catch (_) {}
+
+  let lsVal = '';
+  try {
+    lsVal = (localStorage.getItem('w84.editorBackend') || '').trim().toLowerCase();
+  } catch (_) {}
+
+  const val = urlVal || winVal || lsVal;
+  if (val === 'monaco' || val === 'cm6' || val === 'textarea') return val;
+  return '';
+}
+
+function applyPanelMaxBounds(panel) {
+  const bounds = computeMaximizedBounds(window.innerWidth, window.innerHeight, readChromeOffsets(), 220);
+  panel.style.left = bounds.left + 'px';
+  panel.style.top = bounds.top + 'px';
+  panel.style.width = bounds.width + 'px';
+  panel.style.height = bounds.height + 'px';
+}
+
+function createTextareaEditor(cmWrap, initialValue) {
+  const ta = document.createElement('textarea');
+  ta.className = 'tpl-textarea';
+  ta.value = initialValue;
+  ta.spellcheck = false;
+  ta.style.height = '100%';
+  ta.style.minHeight = '100%';
+  ta.style.resize = 'none';
+  ta.style.border = 'none';
+  ta.style.borderRadius = '0';
+  cmWrap.appendChild(ta);
+
+  function lineColumnToOffset(text, lineNumber, column) {
+    const lines = text.split('\n');
+    let idx = 0;
+    const clampedLine = Math.max(1, Math.min(lineNumber, lines.length));
+    for (let i = 1; i < clampedLine; i++) idx += lines[i - 1].length + 1;
+    const lineLen = lines[clampedLine - 1]?.length || 0;
+    const clampedCol = Math.max(1, Math.min(column, lineLen + 1));
+    return idx + (clampedCol - 1);
+  }
+
+  return {
+    editor: {
+      getValue() { return ta.value; },
+      setValue(v) { ta.value = v; },
+      setPosition(pos) {
+        const i = lineColumnToOffset(ta.value, pos.lineNumber, pos.column);
+        ta.setSelectionRange(i, i);
+      },
+      revealLineInCenter(lineNumber) {
+        const lines = ta.value.split('\n');
+        const target = Math.max(1, Math.min(lineNumber, lines.length));
+        const ratio = target / Math.max(1, lines.length);
+        ta.scrollTop = Math.max(0, (ta.scrollHeight - ta.clientHeight) * ratio - ta.clientHeight / 2);
+      },
+      focus() { ta.focus({ preventScroll: true }); },
+      dispose() {},
+    },
+    inputEl: ta,
+    dispose() {},
+  };
+}
+
+async function createCodeMirror6Editor(cmWrap, initialValue, mode) {
+  const [
+    state,
+    view,
+    commands,
+    language,
+    langYaml,
+    legacyProps,
+    themeOneDark,
+  ] = await Promise.all([
+    import('https://esm.sh/@codemirror/state@6.5.2'),
+    import('https://esm.sh/@codemirror/view@6.33.0'),
+    import('https://esm.sh/@codemirror/commands@6.6.2'),
+    import('https://esm.sh/@codemirror/language@6.10.2'),
+    import('https://esm.sh/@codemirror/lang-yaml@6.1.1'),
+    import('https://esm.sh/@codemirror/legacy-modes@6.4.2/mode/properties'),
+    import('https://esm.sh/@codemirror/theme-one-dark@6.1.2'),
+  ]);
+
+  const langExt = mode === 'yaml'
+    ? langYaml.yaml()
+    : mode === 'properties'
+      ? language.StreamLanguage.define(legacyProps.properties)
+      : [];
+
+  const isLight = document.documentElement.classList.contains('light');
+  const extensions = [
+    view.lineNumbers(),
+    commands.history(),
+    language.syntaxHighlighting(language.defaultHighlightStyle),
+    view.keymap.of([
+      ...commands.defaultKeymap,
+      ...commands.historyKeymap,
+      commands.indentWithTab,
+    ]),
+    view.EditorView.lineWrapping,
+    langExt,
+    view.EditorView.theme({
+      '&': {
+        height: '100%',
+        fontSize: '13px',
+        fontFamily: "'Menlo','Consolas','Monaco',monospace",
+      },
+      '.cm-scroller': { overflow: 'auto' },
+      '.cm-content': { minHeight: '100%' },
+      '.cm-focused': { outline: 'none' },
+    }),
+  ];
+  if (!isLight) {
+    extensions.push(themeOneDark.oneDark);
+  }
+
+  const cmState = state.EditorState.create({
+    doc: initialValue,
+    extensions,
+  });
+
+  const cmView = new view.EditorView({
+    state: cmState,
+    parent: cmWrap,
+  });
+
+  function lineColumnToOffset(text, lineNumber, column) {
+    const lines = text.split('\n');
+    let idx = 0;
+    const clampedLine = Math.max(1, Math.min(lineNumber, lines.length));
+    for (let i = 1; i < clampedLine; i++) idx += lines[i - 1].length + 1;
+    const lineLen = lines[clampedLine - 1]?.length || 0;
+    const clampedCol = Math.max(1, Math.min(column, lineLen + 1));
+    return idx + (clampedCol - 1);
+  }
+
+  return {
+    editor: {
+      getValue() {
+        return cmView.state.doc.toString();
+      },
+      setValue(v) {
+        cmView.dispatch({
+          changes: { from: 0, to: cmView.state.doc.length, insert: v },
+        });
+      },
+      setPosition(pos) {
+        const offset = lineColumnToOffset(cmView.state.doc.toString(), pos.lineNumber, pos.column);
+        cmView.dispatch({ selection: { anchor: offset } });
+      },
+      revealLineInCenter(lineNumber) {
+        const line = cmView.state.doc.line(Math.max(1, Math.min(lineNumber, cmView.state.doc.lines)));
+        cmView.dispatch({ selection: { anchor: line.from } });
+        cmView.scrollPosIntoView(line.from);
+      },
+      focus() {
+        cmView.focus();
+      },
+      dispose() {
+        cmView.destroy();
+      },
+    },
+    inputEl: cmView.dom,
+    dispose() {
+      cmView.destroy();
+    },
+  };
+}
 
 function monacoTheme() {
   return document.documentElement.classList.contains('light') ? 'vs' : 'vs-dark';
@@ -123,8 +312,12 @@ function upsertEntryInYaml(yaml, entryBlock, modelType) {
 }
 
 async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectName, hintHtml, mode }) {
-  // Kick off Monaco load and file fetch in parallel.
-  const monacoP = window.monacoReady;
+  const editorBackendOverride = getEditorBackendOverride();
+  const useCodeMirrorFallback = editorBackendOverride
+    ? (editorBackendOverride === 'cm6' || editorBackendOverride === 'textarea')
+    : isIOSDevice();
+  // Kick off editor load and file fetch in parallel when Monaco is used.
+  const monacoP = useCodeMirrorFallback ? Promise.resolve(null) : window.monacoReady;
   let body = '';
   try {
     const resp = await fetch(endpoint);
@@ -155,6 +348,9 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
 
   document.body.appendChild(panel);
 
+  const phoneViewport = isPhoneViewport();
+  if (phoneViewport) panel.classList.add('mobile-dialog-locked');
+
   // Position: centered with stagger for multiple open panels
   const stagger = (panelZ - 1101) % 5;
   const pw = Math.min(720, window.innerWidth * 0.95);
@@ -170,12 +366,12 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
   let savedPos = null;
 
   function toggleMaximize() {
+    if (phoneViewport) return;
     maximized = !maximized;
     if (maximized) {
       savedPos = { left: panel.style.left, top: panel.style.top,
                    width: panel.style.width, height: panel.style.height };
-      panel.style.left = '0'; panel.style.top = '0';
-      panel.style.width = '100%'; panel.style.height = '100%';
+      applyPanelMaxBounds(panel);
       panel.classList.add('maximized');
     } else {
       panel.style.left = savedPos.left; panel.style.top = savedPos.top;
@@ -185,12 +381,20 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
     // automaticLayout handles relayout on its own; no manual call needed.
   }
 
+  function onViewportChange() {
+    if (maximized) applyPanelMaxBounds(panel);
+  }
+  window.addEventListener('resize', onViewportChange, { passive: true });
+  window.addEventListener('orientationchange', onViewportChange, { passive: true });
+
   header.addEventListener('dblclick', e => {
+    if (phoneViewport) return;
     if (e.target.tagName === 'BUTTON') return;
     toggleMaximize();
   });
 
   header.addEventListener('mousedown', e => {
+    if (phoneViewport) return;
     if (e.target.tagName === 'BUTTON') return;
     e.preventDefault();
     let ox = e.clientX - panel.offsetLeft;
@@ -220,35 +424,71 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
     document.addEventListener('mouseup', onUp);
   });
 
-  // Monaco
+  // Editor
   const cmWrap = panel.querySelector('.editor-cm-wrap');
-  const editor = monaco.editor.create(cmWrap, {
-    value: body,
-    language: monacoLanguage(mode),
-    theme: monacoTheme(),
-    automaticLayout: true,
-    tabSize: 2,
-    insertSpaces: true,
-    wordWrap: 'on',
-    minimap: { enabled: false },
-    fontSize: 13,
-    fontFamily: "'Menlo','Consolas','Monaco',monospace",
-    scrollBeyondLastLine: false,
-    renderWhitespace: 'selection',
-    guides: { indentation: true, highlightActiveIndentation: true, bracketPairs: true },
-    bracketPairColorization: { enabled: true },
-  });
+  let editor;
+  let editorInputEl = null;
+  let disposeEditorExtras = () => {};
+  if (useCodeMirrorFallback) {
+    if (editorBackendOverride === 'textarea') {
+      const fallback = createTextareaEditor(cmWrap, body);
+      editor = fallback.editor;
+      editorInputEl = fallback.inputEl;
+      disposeEditorExtras = fallback.dispose;
+    } else {
+      try {
+        const cm6 = await createCodeMirror6Editor(cmWrap, body, mode);
+        editor = cm6.editor;
+        editorInputEl = cm6.inputEl;
+        disposeEditorExtras = cm6.dispose;
+      } catch (_) {
+        const fallback = createTextareaEditor(cmWrap, body);
+        editor = fallback.editor;
+        editorInputEl = fallback.inputEl;
+        disposeEditorExtras = fallback.dispose;
+      }
+    }
+  } else {
+    editor = monaco.editor.create(cmWrap, {
+      value: body,
+      language: monacoLanguage(mode),
+      theme: monacoTheme(),
+      automaticLayout: true,
+      tabSize: 2,
+      insertSpaces: true,
+      wordWrap: 'on',
+      minimap: { enabled: false },
+      fontSize: 13,
+      fontFamily: "'Menlo','Consolas','Monaco',monospace",
+      scrollBeyondLastLine: false,
+      renderWhitespace: 'selection',
+      guides: { indentation: true, highlightActiveIndentation: true, bracketPairs: true },
+      bracketPairColorization: { enabled: true },
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSave(false));
+
+    // Sync theme when app theme toggles. setTheme is global — affects all editors.
+    const mo = new MutationObserver(() => monaco.editor.setTheme(monacoTheme()));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    disposeEditorExtras = () => mo.disconnect();
+  }
   openPanels.set(endpoint, { editor, panel });
 
-  // Ctrl+S / Cmd+S → Apply (save without closing)
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSave(false));
-
-  // Sync theme when app theme toggles. setTheme is global — affects all editors.
-  const mo = new MutationObserver(() => monaco.editor.setTheme(monacoTheme()));
-  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  // On iOS, ensure focus is moved from user interaction to help open software keyboard.
+  if (editorInputEl) {
+    editorInputEl.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        doSave(false);
+      }
+    });
+    cmWrap.addEventListener('touchend', () => editor.focus(), { passive: true });
+  }
 
   function closePanel() {
-    mo.disconnect();
+    disposeEditorExtras();
+    window.removeEventListener('resize', onViewportChange);
+    window.removeEventListener('orientationchange', onViewportChange);
     openPanels.delete(endpoint);
     editor.dispose();
     document.body.removeChild(panel);
@@ -313,6 +553,12 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
       editor.setPosition({ lineNumber: lineNum, column: 1 });
       setTimeout(() => editor.revealLineInCenter(lineNum), 50);
     }
+  }
+
+  if (phoneViewport) {
+    maximized = true;
+    panel.classList.add('maximized');
+    applyPanelMaxBounds(panel);
   }
 
   editor.focus();

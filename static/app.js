@@ -16,6 +16,42 @@ import { cancelDownload } from './modules/download.js';
 import { openFullConfigModal, openW84ConfigModal } from './modules/config-modal.js';
 import { openDiskTreemap } from './modules/disk-treemap.js';
 
+function syncChromeLayoutVars() {
+  const root = document.documentElement;
+  const banner = document.getElementById('version-banner');
+  const header = document.querySelector('header');
+  const statusBar = document.getElementById('status-bar');
+
+  const bannerVisible = !!banner && getComputedStyle(banner).display !== 'none';
+  const bannerHeight = bannerVisible ? banner.offsetHeight : 0;
+  const headerHeight = header ? header.offsetHeight : 0;
+  const statusHeight = statusBar ? statusBar.offsetHeight : 0;
+
+  root.style.setProperty('--banner-height', bannerHeight + 'px');
+  root.style.setProperty('--header-height', headerHeight + 'px');
+  root.style.setProperty('--top-chrome-height', (bannerHeight + headerHeight) + 'px');
+  root.style.setProperty('--bottom-chrome-height', statusHeight + 'px');
+  document.body.style.paddingBottom = statusHeight + 'px';
+}
+
+function setupChromeLayoutSync() {
+  syncChromeLayoutVars();
+
+  const banner = document.getElementById('version-banner');
+  const header = document.querySelector('header');
+  const statusBar = document.getElementById('status-bar');
+  const ro = new ResizeObserver(syncChromeLayoutVars);
+  if (banner) ro.observe(banner);
+  if (header) ro.observe(header);
+  if (statusBar) ro.observe(statusBar);
+
+  const mo = new MutationObserver(syncChromeLayoutVars);
+  if (banner) mo.observe(banner, { attributes: true, attributeFilter: ['style', 'class'] });
+
+  window.addEventListener('resize', syncChromeLayoutVars, { passive: true });
+  window.addEventListener('orientationchange', syncChromeLayoutVars, { passive: true });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INITIALIZATION
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,6 +65,7 @@ setupStatusBar();
 setupStatusMenu();
 setupRepoBrowser();
 setupRestartButtons();
+setupChromeLayoutSync();
 
 // Action button listeners
 document.getElementById('refresh-btn').addEventListener('click', () => {

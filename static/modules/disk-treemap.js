@@ -1,11 +1,23 @@
 // Non-modal disk-usage treemap dialog — 3-panel layout (models | system | free)
 
 import { esc, formatBytes } from './utils.js';
+import { isPhoneViewport, readChromeOffsets, computeMaximizedBounds } from './ui-viewport.mjs';
 
 const DIR_PAD = 2;  // px inset on each side within a dir box
 
 let dialogEl = null;
 let dialogCleanup = null;
+
+function applyDialogMaxBounds(dlg) {
+  const bounds = computeMaximizedBounds(window.innerWidth, window.innerHeight, readChromeOffsets(), 180);
+  dlg.style.left = bounds.left + 'px';
+  dlg.style.top = bounds.top + 'px';
+  dlg.style.width = bounds.width + 'px';
+  dlg.style.height = bounds.height + 'px';
+  dlg.style.right = 'auto';
+  dlg.style.bottom = 'auto';
+  dlg.style.transform = 'none';
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -491,26 +503,44 @@ function buildLegend(el, tree) {
 
 function setupDrag(dlg) {
   const header = dlg.querySelector('.dtm-header');
+  const phoneViewport = isPhoneViewport();
+  if (phoneViewport) dlg.classList.add('mobile-dialog-locked');
   let dragging = false, pendingDrag = false, maximized = false;
   let startX = 0, startY = 0, startL = 0, startT = 0;
+  let savedPos = null;
 
-  function onDblClick(e) {
-    if (e.target.classList.contains('dtm-close')) return;
-    maximized = !maximized;
+  function setMaximized(next) {
+    maximized = next;
     if (maximized) {
-      dlg.style.left = '0'; dlg.style.top = '0';
-      dlg.style.width = '100%'; dlg.style.height = '100%';
-      dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
-      dlg.style.transform = 'none';
+      savedPos = {
+        left: dlg.style.left,
+        top: dlg.style.top,
+        width: dlg.style.width,
+        height: dlg.style.height,
+        transform: dlg.style.transform,
+      };
+      applyDialogMaxBounds(dlg);
+      dlg.classList.add('maximized');
     } else {
-      dlg.style.left = '50%'; dlg.style.top = '50%';
-      dlg.style.width = ''; dlg.style.height = '';
-      dlg.style.right = 'auto'; dlg.style.bottom = 'auto';
-      dlg.style.transform = 'translate(-50%, -50%)';
+      dlg.style.left = savedPos?.left || '50%';
+      dlg.style.top = savedPos?.top || '50%';
+      dlg.style.width = savedPos?.width || '';
+      dlg.style.height = savedPos?.height || '';
+      dlg.style.right = 'auto';
+      dlg.style.bottom = 'auto';
+      dlg.style.transform = savedPos?.transform || 'translate(-50%, -50%)';
+      dlg.classList.remove('maximized');
     }
   }
 
+  function onDblClick(e) {
+    if (phoneViewport) return;
+    if (e.target.classList.contains('dtm-close')) return;
+    setMaximized(!maximized);
+  }
+
   function onDown(e) {
+    if (phoneViewport) return;
     if (e.target.classList.contains('dtm-close')) return;
     pendingDrag = true;
     startX = e.clientX; startY = e.clientY;
@@ -520,7 +550,7 @@ function setupDrag(dlg) {
     if (pendingDrag && (Math.abs(e.clientX - startX) > 3 || Math.abs(e.clientY - startY) > 3)) {
       pendingDrag = false;
       dragging = true;
-      maximized = false;
+      if (maximized) setMaximized(false);
       const r = dlg.getBoundingClientRect();
       startL = r.left; startT = r.top;
       dlg.style.left = startL + 'px'; dlg.style.top = startT + 'px';
@@ -533,14 +563,24 @@ function setupDrag(dlg) {
     dlg.style.top  = Math.max(0, Math.min(window.innerHeight - 40, startT + e.clientY - startY)) + 'px';
   }
   function onUp() { dragging = false; pendingDrag = false; }
+  function onViewportChange() {
+    if (maximized) applyDialogMaxBounds(dlg);
+  }
+
+  if (phoneViewport) setMaximized(true);
+
   header.addEventListener('dblclick',  onDblClick);
   header.addEventListener('mousedown', onDown);
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup',   onUp);
+  window.addEventListener('resize', onViewportChange, { passive: true });
+  window.addEventListener('orientationchange', onViewportChange, { passive: true });
   return () => {
     header.removeEventListener('dblclick',  onDblClick);
     header.removeEventListener('mousedown', onDown);
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup',   onUp);
+    window.removeEventListener('resize', onViewportChange);
+    window.removeEventListener('orientationchange', onViewportChange);
   };
 }
