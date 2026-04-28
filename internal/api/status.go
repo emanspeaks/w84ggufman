@@ -7,26 +7,27 @@ import (
 )
 
 type statusResponse struct {
-	LlamaReachable     bool         `json:"llamaReachable"`
-	DownloadInProgress bool         `json:"downloadInProgress"`
-	ActiveDownload     string       `json:"activeDownload"`
-	Version            string       `json:"version"`
-	Disk               diskInfo     `json:"disk"`
-	WarnDownloadBytes  uint64       `json:"warnDownloadBytes"`
-	RamTotalBytes      uint64       `json:"ramTotalBytes"`
-	RamUsedBytes       uint64       `json:"ramUsedBytes"`
-	RamKnown           bool         `json:"ramKnown"`
-	WarnRamBytes       uint64       `json:"warnRamBytes"`
-	LoadedModels       []string     `json:"loadedModels"`
-	LlamaSwapEnabled   bool         `json:"llamaSwapEnabled"`
-	LlamaServiceLabel  string       `json:"llamaServiceLabel"`
-	AtopwebURL         string       `json:"atopwebURL,omitempty"`
+	LlamaReachable         bool         `json:"llamaReachable"`
+	DownloadInProgress     bool         `json:"downloadInProgress"`
+	ActiveDownload         string       `json:"activeDownload"`
+	Version                string       `json:"version"`
+	ModelsDir              string       `json:"modelsDir,omitempty"`
+	Disk                   diskInfo     `json:"disk"`
+	WarnDownloadBytes      uint64       `json:"warnDownloadBytes"`
+	RamTotalBytes          uint64       `json:"ramTotalBytes"`
+	RamUsedBytes           uint64       `json:"ramUsedBytes"`
+	RamKnown               bool         `json:"ramKnown"`
+	WarnRamBytes           uint64       `json:"warnRamBytes"`
+	LoadedModels           []string     `json:"loadedModels"`
+	LlamaSwapEnabled       bool         `json:"llamaSwapEnabled"`
+	LlamaServiceLabel      string       `json:"llamaServiceLabel"`
+	AtopwebURL             string       `json:"atopwebURL,omitempty"`
 	LlamaServerURL         string       `json:"llamaServerURL,omitempty"`
 	LlamaServerLandingPage string       `json:"llamaServerLandingPage,omitempty"`
-	GpuPct             float64      `json:"gpuPct"`
-	GpuPctKnown        bool         `json:"gpuPctKnown"`
-	Queue              []QueueEntry `json:"queue"`
-	UpdatesAvailable   int          `json:"updatesAvailable"`
+	GpuPct                 float64      `json:"gpuPct"`
+	GpuPctKnown            bool         `json:"gpuPctKnown"`
+	Queue                  []QueueEntry `json:"queue"`
+	UpdatesAvailable       int          `json:"updatesAvailable"`
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +80,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		DownloadInProgress:     inProgress,
 		ActiveDownload:         active,
 		Version:                s.deps.Version,
+		ModelsDir:              s.cfg.ModelsDir,
 		Disk:                   disk,
 		WarnDownloadBytes:      warnBytes,
 		RamTotalBytes:          ramTotal,

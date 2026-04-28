@@ -1,10 +1,10 @@
 // Repo input and browsing logic
 
-import { clearErr, showErr, esc, formatBytes } from './utils.js';
+import { clearErr, showErr, esc, formatBytes, copyTextToClipboard, joinPath } from './utils.js';
 import { setStatusBar } from './status-bar.js';
 import { renderSidecarTree, isPresentFile, commonPrefix, quantDisplayName, quantBitDepth } from './quant-grid.js';
 import { setRefreshDlBtnExport, startDownload } from './download.js';
-import { diskFreeBytes, ramTotalBytes, llamaSwapEnabled } from './status-polling.js';
+import { diskFreeBytes, ramTotalBytes, llamaSwapEnabled, modelsDir } from './status-polling.js';
 import { openFullConfigModal, injectModelEntry } from './config-modal.js';
 import { fetchLocalModels } from './local-models.js';
 
@@ -24,6 +24,32 @@ function findVaeSidecar(sidecars) {
     if (base === 'ae.safetensors' || base.includes('vae')) return s.filename;
   }
   return '';
+}
+
+function absoluteModelPath(filename) {
+  const rel = String(filename || '');
+  if (!rel) return '';
+  if (currentRepoContext && currentRepoContext.kind === 'local' && currentRepoContext.path) {
+    return joinPath(currentRepoContext.path, rel);
+  }
+  if (currentRepoContext && currentRepoContext.kind === 'repo' && modelsDir && currentRepoContext.repoId) {
+    return joinPath(joinPath(modelsDir, currentRepoContext.repoId), rel);
+  }
+  return '';
+}
+
+async function copyAbsolutePath(filename) {
+  const absPath = absoluteModelPath(filename);
+  if (!absPath) {
+    setStatusBar('Error', 'Could not resolve absolute path for ' + filename, false);
+    return;
+  }
+  const ok = await copyTextToClipboard(absPath);
+  if (ok) {
+    setStatusBar('Ready', 'Copied path: ' + absPath, false);
+  } else {
+    setStatusBar('Error', 'Copy failed — clipboard access denied', false);
+  }
 }
 
 async function addLlamaSwapModelPreset(modelType, filename, sidecars) {
@@ -65,7 +91,6 @@ async function addLlamaSwapModelPreset(modelType, filename, sidecars) {
 }
 
 function showQuantContextMenu(event, filename, sidecars) {
-  if (!llamaSwapEnabled) return;
   event.preventDefault();
   event.stopPropagation();
   document.querySelectorAll('.quant-ctx-menu').forEach(m => m.remove());
@@ -88,8 +113,69 @@ function showQuantContextMenu(event, filename, sidecars) {
     return btn;
   };
 
-  menu.appendChild(mkItem('Add LLM Model Preset…', () => addLlamaSwapModelPreset('llm', filename, sidecars)));
-  menu.appendChild(mkItem('Add SD Model Preset…', () => addLlamaSwapModelPreset('sd', filename, sidecars)));
+  menu.appendChild(mkItem('Copy path to file', () => {
+    copyAbsolutePath(filename).catch(console.error);
+  }));
+
+  if (llamaSwapEnabled) {
+    menu.appendChild(mkItem('Add LLM Model Preset…', () => addLlamaSwapModelPreset('llm', filename, sidecars)));
+    menu.appendChild(mkItem('Add SD Model Preset…', () => addLlamaSwapModelPreset('sd', filename, sidecars)));
+  }
+
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 4;
+  const maxY = window.innerHeight - rect.height - 4;
+  menu.style.left = Math.min(event.clientX, maxX) + 'px';
+  menu.style.top = Math.min(event.clientY, maxY) + 'px';
+
+  const closer = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener('mousedown', closer);
+      document.removeEventListener('keydown', keyCloser);
+    }
+  };
+  const keyCloser = (e) => {
+    if (e.key === 'Escape') {
+      menu.remove();
+      document.removeEventListener('mousedown', closer);
+      document.removeEventListener('keydown', keyCloser);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('mousedown', closer);
+    document.addEventListener('keydown', keyCloser);
+  }, 0);
+}
+
+function showSidecarContextMenu(event, filename) {
+  event.preventDefault();
+  event.stopPropagation();
+  document.querySelectorAll('.quant-ctx-menu').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'quant-ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:1000;background:#1e293b;border:1px solid #334155;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.4);padding:4px;min-width:200px;';
+
+  const mkItem = (label, onClick) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.style.cssText = 'display:block;width:100%;text-align:left;background:transparent;border:none;color:#f1f5f9;padding:6px 12px;font-size:0.85rem;cursor:pointer;border-radius:4px;font-family:inherit;';
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#334155'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.remove();
+      onClick();
+    });
+    return btn;
+  };
+
+  menu.appendChild(mkItem('Copy path to file', () => {
+    copyAbsolutePath(filename).catch(console.error);
+  }));
 
   document.body.appendChild(menu);
 
@@ -371,7 +457,14 @@ function renderRepoInfo(repoId, info) {
 
     const wrap = document.createElement('div');
     wrap.className = 'sidecars-wrap';
-    sidecarTree = renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, () => refreshDlBtn());
+    sidecarTree = renderSidecarTree(
+      wrap,
+      sidecars,
+      presentFiles,
+      sidecarCbs,
+      () => refreshDlBtn(),
+      (event, filename) => showSidecarContextMenu(event, filename),
+    );
     companionEl.appendChild(wrap);
 
     selAllS.addEventListener('click',   () => {

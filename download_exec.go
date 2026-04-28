@@ -85,7 +85,7 @@ func (d *downloader) isDuplicateLocked(repoID string, filenames []string) bool {
 
 // startLocked arms the downloader for a new download and spawns the run
 // goroutine. Must be called with d.mu held; does NOT release the lock.
-func (d *downloader) startLocked(repoID string, filenames []string, sidecarFiles []string, totalBytes int64, label string) {
+func (d *downloader) startLocked(id int64, repoID string, filenames []string, sidecarFiles []string, totalBytes int64, label string) {
 	repoDir := filepath.Join(d.cfg.ModelsDir, filepath.FromSlash(repoID))
 	jobs := make([]downloadJob, 0, len(filenames))
 	for _, filename := range filenames {
@@ -96,12 +96,14 @@ func (d *downloader) startLocked(repoID string, filenames []string, sidecarFiles
 	}
 
 	d.active = label
+	d.activeID = id
 	d.activeRepoID = repoID
 	d.activeFilenames = append([]string(nil), filenames...)
 	d.busy = true
 	d.lines = nil
 	d.totalBytes = totalBytes
 	d.progress = nil
+	d.queueVer++
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	d.cancel = cancelFn
@@ -151,7 +153,8 @@ func (d *downloader) start(repoID string, filenames []string, sidecarFiles []str
 		return true, nil
 	}
 
-	d.startLocked(repoID, filenames, sidecarFiles, totalBytes, label)
+	d.nextID++
+	d.startLocked(d.nextID, repoID, filenames, sidecarFiles, totalBytes, label)
 	return false, nil
 }
 
@@ -163,6 +166,7 @@ func (d *downloader) advanceQueue() {
 		d.busy = false
 		d.cancel = nil
 		d.progress = nil
+		d.activeID = 0
 		d.activeRepoID = ""
 		d.activeFilenames = nil
 		d.queueVer++
@@ -172,6 +176,7 @@ func (d *downloader) advanceQueue() {
 	next := d.queue[0]
 	d.queue = d.queue[1:]
 	d.queueVer++
+	d.activeID = next.id
 	d.active = next.label
 	d.activeRepoID = next.repoID
 	d.activeFilenames = append([]string(nil), next.filenames...)
@@ -326,6 +331,7 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 				d.progress = nil
 				d.queue = nil
 				d.queueVer++
+				d.activeID = 0
 				d.activeRepoID = ""
 				d.activeFilenames = nil
 				d.mu.Unlock()
@@ -361,6 +367,7 @@ func (d *downloader) run(ctx context.Context, repoID, repoDir string, jobs []dow
 				d.progress = nil
 				d.queue = nil
 				d.queueVer++
+				d.activeID = 0
 				d.activeRepoID = ""
 				d.activeFilenames = nil
 				d.mu.Unlock()

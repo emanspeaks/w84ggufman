@@ -5,11 +5,35 @@ import { esc } from './utils.js';
 import { fetchLocalModels } from './local-models.js';
 import { pollStatus } from './status-polling.js';
 import { isPhoneViewport, readChromeOffsets, computeMaximizedBounds } from './ui-viewport.mjs';
+import { bringDialogToFront, registerFloatingDialog } from './dialog-zstack.js';
 
-let panelZ = 1100;
+let panelOpenCount = 0;
 
 // Tracks open panels by endpoint so injectModelEntry can merge into a live editor.
 const openPanels = new Map(); // endpoint -> { editor, panel }
+
+async function loadEditorState(endpoint) {
+  try {
+    const resp = await fetch('/api/editor/state?endpoint=' + encodeURIComponent(endpoint));
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.found || !data.state) return null;
+    return data.state;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function saveEditorState(endpoint, state) {
+  if (!state) return;
+  try {
+    await fetch('/api/editor/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint, state }),
+    });
+  } catch (_) {}
+}
 
 function isIOSDevice() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -192,6 +216,7 @@ async function createCodeMirror6Editor(cmWrap, initialValue, mode) {
         cmView.destroy();
       },
     },
+    view: cmView,
     inputEl: cmView.dom,
     dispose() {
       cmView.destroy();
@@ -260,9 +285,28 @@ export function injectModelEntry(endpoint, entryBlock, modelType, name) {
     p.editor.setPosition({ lineNumber: lineNum, column: 1 });
     setTimeout(() => p.editor.revealLineInCenter(lineNum), 50);
   }
-  p.panel.style.zIndex = ++panelZ;
+  bringDialogToFront(p.panel);
   p.editor.focus();
   return true;
+}
+
+function jumpToModelName(editor, text, selectName) {
+  if (!selectName) return;
+  const re = new RegExp('^\\s{2}' + selectName.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + ':\\s*$', 'm');
+  const m = text.match(re);
+  if (!m) return;
+  const lineNum = text.slice(0, m.index).split('\n').length;
+  editor.setPosition({ lineNumber: lineNum, column: 1 });
+  setTimeout(() => editor.revealLineInCenter(lineNum), 50);
+}
+
+function offsetToLineColumn(text, offset) {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  const before = text.slice(0, clamped);
+  const lineNumber = before.split('\n').length;
+  const lastNewline = before.lastIndexOf('\n');
+  const column = clamped - lastNewline;
+  return { lineNumber, column };
 }
 
 // Mirror of the Go upsertModelEntry logic: replace an existing named block or
@@ -312,6 +356,18 @@ function upsertEntryInYaml(yaml, entryBlock, modelType) {
 }
 
 async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectName, hintHtml, mode }) {
+  const existing = openPanels.get(endpoint);
+  if (existing) {
+    if (!existing.panel.isConnected) {
+      openPanels.delete(endpoint);
+    } else {
+      bringDialogToFront(existing.panel);
+      if (selectName) jumpToModelName(existing.editor, existing.editor.getValue(), selectName);
+      existing.editor.focus();
+      return;
+    }
+  }
+
   const editorBackendOverride = getEditorBackendOverride();
   const useCodeMirrorFallback = editorBackendOverride
     ? (editorBackendOverride === 'cm6' || editorBackendOverride === 'textarea')
@@ -327,7 +383,7 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
 
   const panel = document.createElement('div');
   panel.className = 'editor-panel';
-  panel.style.zIndex = ++panelZ;
+  const panelOrder = panelOpenCount++;
 
   panel.innerHTML = `
     <div class="editor-panel-header">
@@ -352,13 +408,11 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
   if (phoneViewport) panel.classList.add('mobile-dialog-locked');
 
   // Position: centered with stagger for multiple open panels
-  const stagger = (panelZ - 1101) % 5;
+  const stagger = panelOrder % 5;
   const pw = Math.min(720, window.innerWidth * 0.95);
   panel.style.left = Math.max(0, (window.innerWidth - pw) / 2 + stagger * 24) + 'px';
   panel.style.top = (60 + stagger * 24) + 'px';
-
-  // Bring to front on any click within panel
-  panel.addEventListener('mousedown', () => { panel.style.zIndex = ++panelZ; }, true);
+  const detachPanelStacking = registerFloatingDialog(panel);
 
   // Draggable + maximizable header
   const header = panel.querySelector('.editor-panel-header');
@@ -429,23 +483,71 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
   let editor;
   let editorInputEl = null;
   let disposeEditorExtras = () => {};
+  let getEditorState = () => ({ lineNumber: 1, column: 1, scrollTop: 0, scrollLeft: 0 });
+  let applyEditorState = () => {};
   if (useCodeMirrorFallback) {
     if (editorBackendOverride === 'textarea') {
       const fallback = createTextareaEditor(cmWrap, body);
       editor = fallback.editor;
       editorInputEl = fallback.inputEl;
       disposeEditorExtras = fallback.dispose;
+      getEditorState = () => {
+        const pos = offsetToLineColumn(editor.getValue(), fallback.inputEl.selectionStart || 0);
+        return {
+          lineNumber: pos.lineNumber,
+          column: pos.column,
+          scrollTop: fallback.inputEl.scrollTop,
+          scrollLeft: fallback.inputEl.scrollLeft,
+        };
+      };
+      applyEditorState = (state) => {
+        if (!state) return;
+        editor.setPosition({ lineNumber: state.lineNumber || 1, column: state.column || 1 });
+        fallback.inputEl.scrollTop = state.scrollTop || 0;
+        fallback.inputEl.scrollLeft = state.scrollLeft || 0;
+      };
     } else {
       try {
         const cm6 = await createCodeMirror6Editor(cmWrap, body, mode);
         editor = cm6.editor;
         editorInputEl = cm6.inputEl;
         disposeEditorExtras = cm6.dispose;
+        getEditorState = () => {
+          const head = cm6.view.state.selection.main.head;
+          const lc = offsetToLineColumn(cm6.view.state.doc.toString(), head);
+          return {
+            lineNumber: lc.lineNumber,
+            column: lc.column,
+            scrollTop: cm6.view.scrollDOM.scrollTop,
+            scrollLeft: cm6.view.scrollDOM.scrollLeft,
+          };
+        };
+        applyEditorState = (state) => {
+          if (!state) return;
+          editor.setPosition({ lineNumber: state.lineNumber || 1, column: state.column || 1 });
+          cm6.view.scrollDOM.scrollTop = state.scrollTop || 0;
+          cm6.view.scrollDOM.scrollLeft = state.scrollLeft || 0;
+        };
       } catch (_) {
         const fallback = createTextareaEditor(cmWrap, body);
         editor = fallback.editor;
         editorInputEl = fallback.inputEl;
         disposeEditorExtras = fallback.dispose;
+        getEditorState = () => {
+          const pos = offsetToLineColumn(editor.getValue(), fallback.inputEl.selectionStart || 0);
+          return {
+            lineNumber: pos.lineNumber,
+            column: pos.column,
+            scrollTop: fallback.inputEl.scrollTop,
+            scrollLeft: fallback.inputEl.scrollLeft,
+          };
+        };
+        applyEditorState = (state) => {
+          if (!state) return;
+          editor.setPosition({ lineNumber: state.lineNumber || 1, column: state.column || 1 });
+          fallback.inputEl.scrollTop = state.scrollTop || 0;
+          fallback.inputEl.scrollLeft = state.scrollLeft || 0;
+        };
       }
     }
   } else {
@@ -471,8 +573,28 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
     const mo = new MutationObserver(() => monaco.editor.setTheme(monacoTheme()));
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     disposeEditorExtras = () => mo.disconnect();
+    getEditorState = () => {
+      const pos = editor.getPosition() || { lineNumber: 1, column: 1 };
+      return {
+        lineNumber: pos.lineNumber || 1,
+        column: pos.column || 1,
+        scrollTop: editor.getScrollTop(),
+        scrollLeft: editor.getScrollLeft(),
+      };
+    };
+    applyEditorState = (state) => {
+      if (!state) return;
+      editor.setPosition({ lineNumber: state.lineNumber || 1, column: state.column || 1 });
+      editor.setScrollTop(state.scrollTop || 0);
+      editor.setScrollLeft(state.scrollLeft || 0);
+    };
   }
   openPanels.set(endpoint, { editor, panel });
+
+  const savedState = await loadEditorState(endpoint);
+  if (!selectName && savedState) {
+    applyEditorState(savedState);
+  }
 
   // On iOS, ensure focus is moved from user interaction to help open software keyboard.
   if (editorInputEl) {
@@ -486,6 +608,8 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
   }
 
   function closePanel() {
+    saveEditorState(endpoint, getEditorState());
+    detachPanelStacking();
     disposeEditorExtras();
     window.removeEventListener('resize', onViewportChange);
     window.removeEventListener('orientationchange', onViewportChange);
@@ -546,13 +670,7 @@ async function openRawEditPanel({ title, subtitle, endpoint, successMsg, selectN
 
   // Scroll to model section if selectName given
   if (selectName) {
-    const re = new RegExp('^\\s{2}' + selectName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':\\s*$', 'm');
-    const m = body.match(re);
-    if (m) {
-      const lineNum = body.slice(0, m.index).split('\n').length; // 1-based
-      editor.setPosition({ lineNumber: lineNum, column: 1 });
-      setTimeout(() => editor.revealLineInCenter(lineNum), 50);
-    }
+    jumpToModelName(editor, body, selectName);
   }
 
   if (phoneViewport) {

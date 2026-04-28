@@ -6,14 +6,98 @@ import (
 	"strings"
 )
 
+func normalizeCmdForParsing(cmd string) string {
+	cmd = stripShellLineComments(cmd)
+	cmd = strings.ReplaceAll(cmd, "\\\n", " ")
+	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
+	return cmd
+}
+
+// stripShellLineComments removes shell-style # comments while preserving text
+// inside single and double quotes.
+func stripShellLineComments(cmd string) string {
+	var b strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+	atLineStart := true
+	prevWasSpace := true
+
+	for i := 0; i < len(cmd); i++ {
+		ch := cmd[i]
+
+		if ch == '\n' {
+			b.WriteByte(ch)
+			inSingle = false
+			inDouble = false
+			escaped = false
+			atLineStart = true
+			prevWasSpace = true
+			continue
+		}
+
+		if inSingle {
+			b.WriteByte(ch)
+			if ch == '\'' {
+				inSingle = false
+			}
+			atLineStart = false
+			prevWasSpace = ch == ' ' || ch == '\t'
+			continue
+		}
+
+		if inDouble {
+			b.WriteByte(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inDouble = false
+			}
+			atLineStart = false
+			prevWasSpace = ch == ' ' || ch == '\t'
+			continue
+		}
+
+		if ch == '#' && (atLineStart || prevWasSpace) {
+			for i+1 < len(cmd) && cmd[i+1] != '\n' {
+				i++
+			}
+			continue
+		}
+
+		b.WriteByte(ch)
+		switch ch {
+		case '\'':
+			inSingle = true
+			atLineStart = false
+			prevWasSpace = false
+		case '"':
+			inDouble = true
+			atLineStart = false
+			prevWasSpace = false
+		case ' ', '\t', '\r':
+			if atLineStart {
+				atLineStart = true
+			}
+			prevWasSpace = true
+		default:
+			atLineStart = false
+			prevWasSpace = false
+		}
+	}
+
+	return b.String()
+}
+
 // extractCmdPaths returns every value associated with any flag in cmd.
 // It collects both "--flag value" and "--flag=value" forms without requiring
 // a specific allowlist of flag names, so new flags like --llm are covered
 // automatically. Non-path values (port numbers, counts, etc.) are harmless
 // because the caller filters by whether the path is under the models dir.
 func extractCmdPaths(cmd string) []string {
-	cmd = strings.ReplaceAll(cmd, "\\\n", " ")
-	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
+	cmd = normalizeCmdForParsing(cmd)
 	tokens := strings.Fields(cmd)
 	out := make([]string, 0)
 	seen := make(map[string]struct{})
@@ -44,11 +128,12 @@ func extractCmdPaths(cmd string) []string {
 // extractCmdFlag finds the value after flag in a cmd string. Handles
 // newline-separated, backslash-continuation, and single-line formats.
 func extractCmdFlag(cmd, flag string) string {
-	// Strip backslash-newline continuations so tokens are adjacent.
-	cmd = strings.ReplaceAll(cmd, "\\\n", " ")
-	cmd = strings.ReplaceAll(cmd, "\\\r\n", " ")
+	cmd = normalizeCmdForParsing(cmd)
 	tokens := strings.Fields(cmd)
 	for i, t := range tokens {
+		if strings.HasPrefix(t, flag+"=") {
+			return strings.TrimPrefix(t, flag+"=")
+		}
 		if t == flag && i+1 < len(tokens) {
 			return tokens[i+1]
 		}

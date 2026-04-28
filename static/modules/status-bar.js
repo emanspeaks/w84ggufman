@@ -41,30 +41,76 @@ export function renderQueuePanel(entries) {
   panel.innerHTML = '';
   const header = document.createElement('div');
   header.className = 'queue-header';
-  header.textContent = `Queue — ${entries.length} pending`;
+  const activeCount = entries.filter(e => e.state === 'active').length;
+  const queuedCount = entries.length - activeCount;
+  header.textContent = `Downloads - ${entries.length} total (${activeCount} active, ${queuedCount} queued)`;
   panel.appendChild(header);
   entries.forEach(entry => {
     const row = document.createElement('div');
     row.className = 'queue-item';
+
+    const top = document.createElement('div');
+    top.className = 'queue-item-top';
+
     const label = document.createElement('span');
     label.className = 'queue-item-label';
     label.textContent = entry.label;
-    row.appendChild(label);
+    top.appendChild(label);
+
+    const state = document.createElement('span');
+    state.className = 'queue-item-state ' + (entry.state === 'active' ? 'active' : 'queued');
+    state.textContent = entry.state === 'active' ? 'active' : 'queued';
+    top.appendChild(state);
+
     if (entry.totalBytes > 0) {
       const size = document.createElement('span');
       size.className = 'queue-item-size';
       size.textContent = formatBytes(entry.totalBytes);
-      row.appendChild(size);
+      top.appendChild(size);
     }
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'queue-item-remove';
-    removeBtn.textContent = '✕';
-    removeBtn.title = 'Remove from queue';
-    removeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      fetch(`/api/queue/${entry.id}`, { method: 'DELETE' });
-    });
-    row.appendChild(removeBtn);
+
+    if (entry.state !== 'active') {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'queue-item-remove';
+      removeBtn.textContent = 'x';
+      removeBtn.title = 'Remove from queue';
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fetch(`/api/queue/${entry.id}`, { method: 'DELETE' });
+      });
+      top.appendChild(removeBtn);
+    }
+
+    const progress = document.createElement('div');
+    progress.className = 'queue-item-progress';
+    const fill = document.createElement('div');
+    fill.className = 'queue-item-progress-fill';
+
+    let pct = entry.pct;
+    if (typeof pct !== 'number' || pct < 0) {
+      if (entry.totalBytes > 0 && entry.dlBytes > 0) {
+        pct = Math.round((entry.dlBytes / entry.totalBytes) * 100);
+      } else {
+        pct = 0;
+      }
+    }
+    if (pct > 100) pct = 100;
+    if (pct < 0) pct = 0;
+    fill.style.width = pct + '%';
+    progress.appendChild(fill);
+
+    const detail = document.createElement('div');
+    detail.className = 'queue-item-detail';
+    if (entry.totalBytes > 0) {
+      const done = entry.state === 'active' && entry.dlBytes > 0 ? Math.min(entry.dlBytes, entry.totalBytes) : 0;
+      detail.textContent = `${pct}% (${formatBytes(done)} / ${formatBytes(entry.totalBytes)})`;
+    } else {
+      detail.textContent = `${pct}%`;
+    }
+
+    row.appendChild(top);
+    row.appendChild(progress);
+    row.appendChild(detail);
     panel.appendChild(row);
   });
 }

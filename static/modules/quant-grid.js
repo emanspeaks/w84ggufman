@@ -37,7 +37,7 @@ export function buildSidecarTree(sidecars) {
   return root;
 }
 
-export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refreshDlBtn) {
+export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refreshDlBtn, onFileContextMenu) {
   const tree = buildSidecarTree(sidecars);
   const dirToggles = [];
 
@@ -114,6 +114,10 @@ export function renderSidecarTree(wrap, sidecars, presentFiles, sidecarCbs, refr
       nameSpan.className = 'sidecar-name';
       nameSpan.textContent = f.name;
       row.appendChild(nameSpan);
+
+      if (typeof onFileContextMenu === 'function') {
+        row.addEventListener('contextmenu', (e) => onFileContextMenu(e, f.entry.filename));
+      }
 
       if (f.entry.size != null) {
         const sizeSpan = document.createElement('span');

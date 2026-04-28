@@ -1,7 +1,9 @@
 // Non-modal disk-usage treemap dialog — 3-panel layout (models | system | free)
 
-import { esc, formatBytes } from './utils.js';
+import { esc, formatBytes, copyTextToClipboard, joinPath } from './utils.js';
 import { isPhoneViewport, readChromeOffsets, computeMaximizedBounds } from './ui-viewport.mjs';
+import { bringDialogToFront, registerFloatingDialog } from './dialog-zstack.js';
+import { setStatusBar } from './status-bar.js';
 
 const DIR_PAD = 2;  // px inset on each side within a dir box
 
@@ -22,7 +24,10 @@ function applyDialogMaxBounds(dlg) {
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export async function openDiskTreemap() {
-  if (dialogEl) { dialogEl.style.zIndex = '401'; return; }
+  if (dialogEl) {
+    bringDialogToFront(dialogEl);
+    return;
+  }
 
   let data;
   try {
@@ -61,6 +66,7 @@ export async function openDiskTreemap() {
   document.addEventListener('click', onDocClick);
   const detachDrag = setupDrag(dialogEl);
   document.body.appendChild(dialogEl);
+  const detachDialogStacking = registerFloatingDialog(dialogEl);
 
   const body = dialogEl.querySelector('.dtm-body');
   const hoverPathEl = dialogEl.querySelector('.dtm-hover-path');
@@ -127,6 +133,7 @@ export async function openDiskTreemap() {
 
   dialogCleanup = () => {
     ro.disconnect();
+    detachDialogStacking();
     detachDrag();
     document.removeEventListener('click', onDocClick);
   };
@@ -412,6 +419,22 @@ function showMenu(e, node, state) {
   removeMenu();
   menuEl = document.createElement('div');
   menuEl.className = 'dtm-menu';
+
+  const copy = document.createElement('button');
+  copy.className = 'dtm-menu-item';
+  copy.textContent = 'Copy path to file';
+  copy.addEventListener('click', async ev => {
+    ev.stopPropagation();
+    removeMenu();
+    const fullPath = joinPath(state.data.modelsDir, node.path);
+    const ok = await copyTextToClipboard(fullPath);
+    if (ok) {
+      setStatusBar('Ready', 'Copied path: ' + fullPath, false);
+    } else {
+      setStatusBar('Error', 'Copy failed — clipboard access denied', false);
+    }
+  });
+  menuEl.appendChild(copy);
 
   const open = document.createElement('button');
   open.className = 'dtm-menu-item';
