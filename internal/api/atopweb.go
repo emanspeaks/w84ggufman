@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -22,6 +23,13 @@ type atopwebSystemResponse struct {
 
 type atopwebGPUPctEntry struct {
 	GpuPct float64 `json:"gpu_pct"`
+}
+
+type atopwebGPUPctResponse struct {
+	GpuPct  float64              `json:"gpu_pct"`
+	GpuPct2 float64              `json:"gpuPct"`
+	GPUs    []atopwebGPUPctEntry `json:"gpus"`
+	Data    []atopwebGPUPctEntry `json:"data"`
 }
 
 // atopwebWasOK tracks the last known connection state so we only log transitions.
@@ -109,13 +117,56 @@ func probeAtopwebGPUPct(baseURL string) (pct float64, ok bool) {
 		return 0, false
 	}
 	defer resp.Body.Close()
-	var entries []atopwebGPUPctEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil || len(entries) == 0 {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return 0, false
 	}
-	var sum float64
-	for _, e := range entries {
-		sum += e.GpuPct
+	return decodeAtopwebGPUPct(body)
+}
+
+func decodeAtopwebGPUPct(body []byte) (pct float64, ok bool) {
+	var entries []atopwebGPUPctEntry
+	if err := json.Unmarshal(body, &entries); err == nil {
+		if len(entries) == 0 {
+			return 0, true
+		}
+		var sum float64
+		for _, e := range entries {
+			sum += e.GpuPct
+		}
+		return sum / float64(len(entries)), true
 	}
-	return sum / float64(len(entries)), true
+
+	var wrapped atopwebGPUPctResponse
+	if err := json.Unmarshal(body, &wrapped); err != nil {
+		return 0, false
+	}
+
+	if wrapped.GpuPct > 0 || wrapped.GpuPct2 > 0 {
+		if wrapped.GpuPct > 0 {
+			return wrapped.GpuPct, true
+		}
+		return wrapped.GpuPct2, true
+	}
+
+	if len(wrapped.GPUs) > 0 {
+		var sum float64
+		for _, e := range wrapped.GPUs {
+			sum += e.GpuPct
+		}
+		return sum / float64(len(wrapped.GPUs)), true
+	}
+	if len(wrapped.Data) > 0 {
+		var sum float64
+		for _, e := range wrapped.Data {
+			sum += e.GpuPct
+		}
+		return sum / float64(len(wrapped.Data)), true
+	}
+
+	if strings.TrimSpace(string(body)) == "{}" {
+		return 0, true
+	}
+
+	return 0, false
 }
