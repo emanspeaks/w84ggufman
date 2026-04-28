@@ -27,3 +27,37 @@ export function showErr(id, msg) {
 }
 
 export function clearErr(id) { showErr(id, ''); }
+
+export async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {}
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.appendChild(ta);
+  const prevActive = document.activeElement;
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  document.body.removeChild(ta);
+  if (prevActive && typeof prevActive.focus === 'function') prevActive.focus();
+  return ok;
+}
+
+export function joinPath(base, rel) {
+  const b = String(base || '');
+  const r = String(rel || '');
+  if (!b) return r;
+  if (!r) return b;
+  const sep = b.includes('\\') ? '\\' : '/';
+  const baseNorm = b.replace(/[\\/]+$/, '');
+  let relNorm = r.replace(/[\\/]+/g, sep);
+  while (relNorm.startsWith(sep)) relNorm = relNorm.slice(1);
+  return relNorm ? (baseNorm + sep + relNorm) : baseNorm;
+}

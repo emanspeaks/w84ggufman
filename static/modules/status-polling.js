@@ -10,6 +10,7 @@ export let llamaSwapEnabled = false;
 export let atopwebURL = '';
 export let llamaServerURL = '';
 export let llamaServerLandingPage = '/';
+export let modelsDir = '';
 
 // Last successfully received GPU / RAM values. Null = never received.
 // Kept across polls so a single probe failure doesn't flash the row away.
@@ -17,11 +18,21 @@ let lastRamUsedBytes = null;
 let lastGpuPct = null;
 let initialVersion = null;
 
+function setHeaderConnectionState(connected) {
+  const header = document.querySelector('header');
+  if (!header) return;
+  header.classList.toggle('server-disconnected', !connected);
+}
+
 export async function pollStatus() {
   try {
     const resp = await fetch('/api/status');
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      setHeaderConnectionState(false);
+      return;
+    }
     const s = await resp.json();
+    setHeaderConnectionState(!!s.llamaReachable);
     const el = document.getElementById('status-indicator');
     if (s.llamaServiceLabel) {
       setLlamaServiceLabel(s.llamaServiceLabel);
@@ -33,6 +44,9 @@ export async function pollStatus() {
     }
     if (s.llamaServerLandingPage != null) {
       llamaServerLandingPage = s.llamaServerLandingPage;
+    }
+    if (s.modelsDir != null) {
+      modelsDir = s.modelsDir;
     }
     if (s.llamaSwapEnabled != null) {
       llamaSwapEnabled = s.llamaSwapEnabled;
@@ -116,7 +130,9 @@ export async function pollStatus() {
       badge.style.display = count > 0 ? '' : 'none';
       badge.textContent = count === 1 ? 'Update available' : `${count} updates available`;
     }
-  } catch (_) {}
+  } catch (_) {
+    setHeaderConnectionState(false);
+  }
 }
 
 export function setupStatusPolling() {

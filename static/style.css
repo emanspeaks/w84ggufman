@@ -37,6 +37,11 @@ header {
   background: #020617; color: #f8fafc; padding: 0.75rem 1.5rem;
   display: flex; align-items: center; gap: 1rem;
   border-bottom: 1px solid #1e293b;
+  transition: background-color 0.2s, border-bottom-color 0.2s;
+}
+header.server-disconnected {
+  background: #3f1515;
+  border-bottom-color: #7f1d1d;
 }
 .header-title { display: flex; align-items: center; gap: 0.5rem; flex: 1; }
 header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
@@ -376,7 +381,7 @@ html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
 #queue-panel {
   border-top: 1px solid #1e293b;
   padding: 4px 1rem 5px;
-  max-height: 120px; overflow-y: auto;
+  max-height: 180px; overflow-y: auto;
 }
 #queue-panel .queue-header {
   color: #475569; text-transform: uppercase;
@@ -384,14 +389,56 @@ html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
   margin-bottom: 3px;
 }
 #queue-panel .queue-item {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 1px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 0 5px;
+}
+#queue-panel .queue-item-top {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 #queue-panel .queue-item-label {
   flex: 1; color: #94a3b8;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
+#queue-panel .queue-item-state {
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0 5px;
+  line-height: 1.4;
+}
+#queue-panel .queue-item-state.active {
+  color: #93c5fd;
+  border-color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.12);
+}
+#queue-panel .queue-item-state.queued {
+  color: #94a3b8;
+  border-color: #334155;
+  background: rgba(30, 41, 59, 0.65);
+}
 #queue-panel .queue-item-size { color: #475569; white-space: nowrap; }
+#queue-panel .queue-item-progress {
+  height: 5px;
+  border-radius: 3px;
+  background: #1e293b;
+  overflow: hidden;
+}
+#queue-panel .queue-item-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #3b82f6;
+  transition: width 0.35s linear;
+}
+#queue-panel .queue-item-detail {
+  font-size: 0.62rem;
+  color: #64748b;
+}
 #queue-panel .queue-item-remove {
   background: none; border: none; color: #475569;
   cursor: pointer; padding: 0 2px; font-size: 0.65rem;
@@ -402,6 +449,22 @@ html.light #queue-panel { border-top-color: #e2e8f0; }
 html.light #queue-panel .queue-header { color: #94a3b8; }
 html.light #queue-panel .queue-item-label { color: #475569; }
 html.light #queue-panel .queue-item-size { color: #94a3b8; }
+html.light #queue-panel .queue-item-state.active {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+}
+html.light #queue-panel .queue-item-state.queued {
+  color: #64748b;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+html.light #queue-panel .queue-item-progress {
+  background: #e2e8f0;
+}
+html.light #queue-panel .queue-item-detail {
+  color: #94a3b8;
+}
 #status-bar-main {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 6px 1rem; min-height: 32px;
@@ -440,6 +503,7 @@ html.light #queue-panel .queue-item-size { color: #94a3b8; }
 /* ── Light mode ──────────────────────────────────────────────────────── */
 html.light body            { background: #f8fafc; color: #0f172a; }
 html.light header          { background: #f1f5f9; color: #0f172a; border-bottom-color: #cbd5e1; }
+html.light header.server-disconnected { background: #fee2e2; border-bottom-color: #fca5a5; }
 html.light #app-version    { color: #94a3b8; }
 html.light .theme-track { background: #e2e8f0; border-color: #94a3b8; }
 html.light .theme-thumb { transform: translateX(12px); background: #64748b; }

@@ -41,6 +41,8 @@ func buildMux(srv *internalapi.Server, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("GET /api/llamaswap/config", srv.HandleGetLlamaSwapConfig)
 	mux.HandleFunc("PUT /api/llamaswap/config", srv.HandlePutLlamaSwapConfig)
 	mux.HandleFunc("POST /api/llamaswap/model", srv.HandleAddLlamaSwapModel)
+	mux.HandleFunc("GET /api/editor/state", srv.HandleGetEditorState)
+	mux.HandleFunc("PUT /api/editor/state", srv.HandlePutEditorState)
 	mux.HandleFunc("POST /api/updates/apply", srv.HandleApplyUpdates)
 	return mux
 }

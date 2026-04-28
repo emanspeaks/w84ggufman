@@ -73,6 +73,7 @@ type downloader struct {
 	postDownloadHook func(repoID, repoDir string)
 	mu               sync.Mutex
 	active           string
+	activeID        int64
 	activeRepoID    string   // repoID of the currently-running download (for dedup)
 	activeFilenames []string // filenames of the currently-running download (for dedup)
 	busy            bool
@@ -140,6 +141,7 @@ func (d *downloader) finishWithError(err error) {
 	d.progress = nil
 	d.queue = nil
 	d.queueVer++
+	d.activeID = 0
 	d.activeRepoID = ""
 	d.activeFilenames = nil
 	d.mu.Unlock()

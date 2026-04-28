@@ -63,6 +63,9 @@ type queueSSEEntry struct {
 	TotalBytes int64    `json:"totalBytes"`
 	RepoID     string   `json:"repoId"`
 	Filenames  []string `json:"filenames"`
+	State      string   `json:"state"`
+	Pct        int      `json:"pct"`
+	DLBytes    int64    `json:"dlBytes"`
 }
 
 func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +104,11 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		busy := d.busy
 		prog := d.progress
 		queueVer := d.queueVer
+		activeID := d.activeID
+		activeLabel := d.active
+		activeRepoID := d.activeRepoID
+		activeTotal := d.totalBytes
+		activeFiles := append([]string(nil), d.activeFilenames...)
 		queueSnap := make([]queueEntry, len(d.queue))
 		copy(queueSnap, d.queue)
 		d.mu.Unlock()
@@ -116,15 +124,36 @@ func (d *downloader) streamSSE(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if queueVer != lastQueueVer {
-			entries := make([]queueSSEEntry, len(queueSnap))
-			for i, e := range queueSnap {
-				entries[i] = queueSSEEntry{
+			entries := make([]queueSSEEntry, 0, len(queueSnap)+1)
+			if busy && activeID > 0 {
+				activePct := -1
+				activeDLBytes := int64(0)
+				if prog != nil {
+					activePct = prog.Pct
+					activeDLBytes = prog.DLBytes
+				}
+				entries = append(entries, queueSSEEntry{
+					ID:         activeID,
+					Label:      activeLabel,
+					TotalBytes: activeTotal,
+					RepoID:     activeRepoID,
+					Filenames:  activeFiles,
+					State:      "active",
+					Pct:        activePct,
+					DLBytes:    activeDLBytes,
+				})
+			}
+			for _, e := range queueSnap {
+				entries = append(entries, queueSSEEntry{
 					ID:         e.id,
 					Label:      e.label,
 					TotalBytes: e.totalBytes,
 					RepoID:     e.repoID,
 					Filenames:  e.filenames,
-				}
+					State:      "queued",
+					Pct:        0,
+					DLBytes:    0,
+				})
 			}
 			writeSSEEvent(w, "queue", entries)
 			flusher.Flush()

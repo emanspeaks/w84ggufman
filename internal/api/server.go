@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 )
 
 type Config struct {
@@ -126,11 +127,12 @@ type Dependencies struct {
 }
 
 type Server struct {
-	cfg       Config
-	dl        Downloader
-	preset    PresetManager
-	llamaSwap LlamaSwapManager
-	deps      Dependencies
+	cfg           Config
+	dl            Downloader
+	preset        PresetManager
+	llamaSwap     LlamaSwapManager
+	deps          Dependencies
+	editorStateMu sync.Mutex
 }
 
 func NewServer(cfg Config, deps Dependencies) *Server {
