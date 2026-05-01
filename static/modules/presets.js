@@ -103,6 +103,27 @@ function setupPresetsResize() {
   });
 }
 
+function applyScrollbackLimit() {
+  const inp = document.getElementById('log-lines-input');
+  const v = parseInt(inp?.value, 10);
+  if (v >= 10 && v <= 9999) {
+    maxLogLines = v;
+    for (const buf of modelBuffers.values()) {
+      if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+    }
+    renderLogPane();
+  }
+}
+
+function setWatchAll(checked) {
+  document.querySelectorAll('.watch-checkbox').forEach(cb => {
+    if (cb.checked !== checked) {
+      cb.checked = checked;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+}
+
 // ── Log pane visibility ───────────────────────────────────────────────────────
 function updateLogPaneVisibility() {
   const hidden = watchedModels.size === 0;
@@ -112,6 +133,11 @@ function updateLogPaneVisibility() {
 
 // ── Log pane controls ─────────────────────────────────────────────────────────
 function setupLogPaneControls() {
+  document.getElementById('log-lines-apply-btn')?.addEventListener('click', () => applyScrollbackLimit());
+  document.getElementById('log-lines-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyScrollbackLimit();
+  });
+
   document.getElementById('clear-logs-btn')?.addEventListener('click', () => {
     modelBuffers.clear();
     renderLogPane();
@@ -156,17 +182,6 @@ function setupLogPaneControls() {
     const inp = document.getElementById('log-filter-input');
     if (inp) { inp.value = ''; inp.classList.remove('filter-invalid'); }
     renderLogPane();
-  });
-
-  document.getElementById('log-lines-input')?.addEventListener('change', (e) => {
-    const v = parseInt(e.target.value, 10);
-    if (v >= 10 && v <= 9999) {
-      maxLogLines = v;
-      for (const buf of modelBuffers.values()) {
-        if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
-      }
-      renderLogPane();
-    }
   });
 
   // Pause auto-scroll when user scrolls up.
@@ -366,6 +381,8 @@ function renderPresets(models) {
         <input type="checkbox" id="show-unlisted-checkbox"${showUnlisted ? ' checked' : ''}>
         Show unlisted
       </label>
+      <button class="btn-secondary" id="watch-all-btn">Watch All</button>
+      <button class="btn-secondary" id="watch-none-btn">Unwatch All</button>
       <button class="btn-secondary" id="unload-all-btn">Unload All</button>
     </div>
     <table class="presets-table">
@@ -414,6 +431,8 @@ function renderPresets(models) {
     showUnlisted = e.target.checked;
     fetchPresets();
   });
+  document.getElementById('watch-all-btn').addEventListener('click', () => setWatchAll(true));
+  document.getElementById('watch-none-btn').addEventListener('click', () => setWatchAll(false));
   document.getElementById('unload-all-btn').addEventListener('click', unloadAllModels);
   list.querySelectorAll('.load-btn').forEach(btn => {
     btn.addEventListener('click', () => loadModel(btn.dataset.modelId));
