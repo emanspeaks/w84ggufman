@@ -86,14 +86,14 @@
 .log-lines-input:focus { border-color: #54a4f3; }
 
 .log-pane-btn {
-  background: none; border: none; cursor: pointer;
-  color: #666663; padding: 3px 5px; border-radius: 4px;
+  background: #2e2e2d; border: 1px solid #3a3a38; cursor: pointer;
+  color: #888885; padding: 2px 6px; border-radius: 4px;
   display: flex; align-items: center; gap: 3px;
   font-size: 0.7rem; line-height: 1;
-  transition: background 0.1s, color 0.1s;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
-.log-pane-btn:hover { background: #3a3a38; color: #e5e5e5; }
-.log-pane-btn.active { color: #54a4f3; background: #1c1c1b; }
+.log-pane-btn:hover { background: #3a3a38; border-color: #54a4f3; color: #e5e5e5; }
+.log-pane-btn.active { color: #54a4f3; background: #1c1c1b; border-color: #54a4f3; }
 .log-pane-btn svg { flex-shrink: 0; }
 
 /* ── Filter row ──────────────────────────────────────────────────────────── */
@@ -195,9 +195,9 @@ html.light #presets-resize-handle:hover,
 html.light #presets-resize-handle.dragging { background: #54a4f3; }
 html.light .log-pane-header                { background: #e8e8e6; border-color: #c8c8c5; }
 html.light .log-pane-title                 { color: #5a5a58; }
-html.light .log-pane-btn                   { color: #888885; }
-html.light .log-pane-btn:hover             { background: #c8c8c5; color: #232322; }
-html.light .log-pane-btn.active            { color: #134eb2; background: #dde8f8; }
+html.light .log-pane-btn                   { background: #ebebea; border-color: #c0c0bd; color: #555553; }
+html.light .log-pane-btn:hover             { background: #dcdcda; border-color: #134eb2; color: #232322; }
+html.light .log-pane-btn.active            { color: #134eb2; background: #dde8f8; border-color: #134eb2; }
 html.light .log-pane-filter-row            { background: #f0f0ee; border-color: #c8c8c5; }
 html.light .log-pane-filter-input          { background: #ffffff; border-color: #c8c8c5; color: #232322; }
 html.light .log-lines-label   { color: #888885; }
