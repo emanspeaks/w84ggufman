@@ -1,6 +1,7 @@
 ﻿// Model presets display — mirrors llama-swap's ModelsPanel in plain JS.
 //
-// Data source: GET /api/llamaswap/models  (SSE-based, returns []Model)
+// Data source (primary): SSE /api/llamaswap/models/stream (modelStatus updates)
+// Fallback:             GET /api/llamaswap/models  (snapshot)
 // Log streams:  GET /api/llamaswap/logs/stream/{model_id}
 //
 // Model states: "ready" | "starting" | "stopping" | "stopped" | "shutdown" | "unknown"
@@ -18,11 +19,33 @@ const watchedModels = new Set(); // model IDs whose log checkbox is checked
 // ── Polling ───────────────────────────────────────────────────────────────────
 let pollTimer = null;
 const POLL_INTERVAL_MS = 5000;
+const PRESETS_FETCH_TIMEOUT_MS = 12000;
+const POLLING_FALLBACK_DELAY_MS = 2500;
+let presetsFetchInFlight = false;
+let presetsFetchAbort = null;
+let modelStatusEventSource = null;
+let fallbackArmTimer = null;
+
+async function fetchWithTimeout(url, opts = {}, timeoutMs = PRESETS_FETCH_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const merged = { ...opts, signal: ctrl.signal };
+    return await fetch(url, merged);
+  } finally {
+    clearTimeout(t);
+  }
+}
 
 export async function fetchPresets() {
+  if (presetsFetchInFlight) return;
   clearErr('presets-error');
+  presetsFetchInFlight = true;
+  const ctrl = new AbortController();
+  presetsFetchAbort = ctrl;
+  const t = setTimeout(() => ctrl.abort(), PRESETS_FETCH_TIMEOUT_MS);
   try {
-    const resp = await fetch('/api/llamaswap/models');
+    const resp = await fetch('/api/llamaswap/models', { signal: ctrl.signal });
     if (resp.status === 503) {
       document.getElementById('presets-list').innerHTML =
         '<p class="msg-empty">llama-swap is not configured — presets are only available when running in llama-swap mode.</p>';
@@ -34,21 +57,105 @@ export async function fetchPresets() {
     models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
     renderPresets(models);
   } catch (e) {
-    showErr('presets-error', 'Failed to load presets: ' + e.message);
+    if (e.name !== 'AbortError') showErr('presets-error', 'Failed to load presets: ' + e.message);
+  } finally {
+    clearTimeout(t);
+    if (presetsFetchAbort === ctrl) presetsFetchAbort = null;
+    presetsFetchInFlight = false;
   }
 }
 
 export function startPresetsPolling() {
   stopPresetsPolling();
-  pollTimer = setInterval(fetchPresets, POLL_INTERVAL_MS);
+  startModelStatusStream();
 }
 
 export function stopPresetsPolling() {
+  stopModelStatusStream();
+  disarmPollingFallback();
   if (pollTimer !== null) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  if (presetsFetchAbort) {
+    presetsFetchAbort.abort();
+    presetsFetchAbort = null;
+  }
+  presetsFetchInFlight = false;
   stopAllLogStreams();
+}
+
+function ensurePollingFallback() {
+  if (pollTimer !== null) return;
+  fetchPresets();
+  pollTimer = setInterval(fetchPresets, POLL_INTERVAL_MS);
+}
+
+function armPollingFallback() {
+  if (pollTimer !== null || fallbackArmTimer !== null) return;
+  fallbackArmTimer = setTimeout(() => {
+    fallbackArmTimer = null;
+    ensurePollingFallback();
+  }, POLLING_FALLBACK_DELAY_MS);
+}
+
+function disarmPollingFallback() {
+  if (fallbackArmTimer !== null) {
+    clearTimeout(fallbackArmTimer);
+    fallbackArmTimer = null;
+  }
+}
+
+function stopPollingFallback() {
+  disarmPollingFallback();
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function handleModelStatusData(data) {
+  let models;
+  try {
+    models = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(models)) return;
+  clearErr('presets-error');
+  models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
+  renderPresets(models);
+}
+
+function startModelStatusStream() {
+  if (typeof EventSource === 'undefined') {
+    ensurePollingFallback();
+    return;
+  }
+  stopModelStatusStream();
+  const es = new EventSource('/api/llamaswap/models/stream');
+  modelStatusEventSource = es;
+
+  es.addEventListener('open', () => {
+    stopPollingFallback();
+  });
+
+  es.addEventListener('modelStatus', (ev) => {
+    stopPollingFallback();
+    handleModelStatusData(ev.data || '');
+  });
+
+  es.onerror = () => {
+    // EventSource auto-reconnects; only start polling if disconnect persists.
+    armPollingFallback();
+  };
+}
+
+function stopModelStatusStream() {
+  if (modelStatusEventSource) {
+    modelStatusEventSource.close();
+    modelStatusEventSource = null;
+  }
 }
 
 // ── One-time setup (called from app.js on DOMContentLoaded) ──────────────────
@@ -542,14 +649,14 @@ function modelRow(model) {
 async function loadModel(modelId) {
   const btn = document.querySelector(`.load-btn[data-model-id="${modelId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  fetch(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' })
+  fetchWithTimeout(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' }, 15000)
     .catch(e => showErr('presets-error', 'Failed to load model: ' + e.message));
   setTimeout(fetchPresets, 800);
 }
 
 async function unloadModel(modelId) {
   try {
-    const resp = await fetch(`/api/llamaswap/models/unload/${encodeURIComponent(modelId)}`, { method: 'POST' });
+    const resp = await fetchWithTimeout(`/api/llamaswap/models/unload/${encodeURIComponent(modelId)}`, { method: 'POST' }, 15000);
     if (!resp.ok) throw new Error(await resp.text());
     fetchPresets();
   } catch (e) {
@@ -559,7 +666,7 @@ async function unloadModel(modelId) {
 
 async function unloadAllModels() {
   try {
-    const resp = await fetch('/api/llamaswap/models/unload', { method: 'POST' });
+    const resp = await fetchWithTimeout('/api/llamaswap/models/unload', { method: 'POST' }, 15000);
     if (!resp.ok) throw new Error(await resp.text());
     fetchPresets();
   } catch (e) {

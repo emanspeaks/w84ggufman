@@ -42,6 +42,7 @@ func buildMux(srv *internalapi.Server, staticFS fs.FS) *http.ServeMux {
 	mux.HandleFunc("PUT /api/llamaswap/config", srv.HandlePutLlamaSwapConfig)
 	mux.HandleFunc("POST /api/llamaswap/model", srv.HandleAddLlamaSwapModel)
 	mux.HandleFunc("GET /api/llamaswap/models", srv.HandleLlamaSwapModels)
+	mux.HandleFunc("GET /api/llamaswap/models/stream", srv.HandleLlamaSwapModelsStream)
 	mux.HandleFunc("POST /api/llamaswap/models/load/{id}", srv.HandleLlamaSwapLoadModel)
 	mux.HandleFunc("POST /api/llamaswap/models/unload", srv.HandleLlamaSwapUnloadAll)
 	mux.HandleFunc("POST /api/llamaswap/models/unload/{id}", srv.HandleLlamaSwapUnloadModel)
