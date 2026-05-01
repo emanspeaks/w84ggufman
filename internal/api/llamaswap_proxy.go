@@ -145,6 +145,132 @@ func (s *Server) HandleLlamaSwapModels(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HandleLlamaSwapModelsStream opens a persistent SSE stream that forwards only
+// llama-swap modelStatus updates as SSE `event: modelStatus` messages.
+func (s *Server) HandleLlamaSwapModelsStream(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if s.cfg.LlamaServerURL == "" {
+		http.Error(w, "llama-swap server not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/api/events", nil)
+	if err != nil {
+		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		http.Error(w, "llama-swap requires an API key — set apiKey in your w84ggufman config", http.StatusServiceUnavailable)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		http.Error(w, "llama-swap /api/events returned "+resp.Status+": "+string(body), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, canFlush := w.(http.Flusher)
+	if !canFlush {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	type sseEnvelope struct {
+		Type string `json:"type"`
+		Data string `json:"data"`
+	}
+
+	const modelStatusMark = `"modelStatus"`
+	const dataPrefix = "data:"
+	reader := bufio.NewReaderSize(resp.Body, 4096)
+
+	// keepalive comment so proxies open the stream immediately
+	_, _ = io.WriteString(w, ": connected\n\n")
+	flusher.Flush()
+
+	drainLine := func() error {
+		for {
+			_, err := reader.ReadSlice('\n')
+			if err != bufio.ErrBufferFull {
+				return err
+			}
+		}
+	}
+
+	for {
+		head, readErr := reader.ReadSlice('\n')
+		isFullLine := readErr != bufio.ErrBufferFull
+
+		isDataLine := bytes.HasPrefix(bytes.TrimSpace(head), []byte(dataPrefix))
+		looksLikeModelStatus := isDataLine && bytes.Contains(head, []byte(modelStatusMark))
+
+		if !looksLikeModelStatus {
+			if !isFullLine {
+				if drainErr := drainLine(); drainErr != nil {
+					return
+				}
+				continue
+			}
+			if readErr != nil {
+				return
+			}
+			continue
+		}
+
+		lineBytes := append([]byte{}, head...)
+		if !isFullLine {
+			rest, restErr := reader.ReadString('\n')
+			lineBytes = append(lineBytes, rest...)
+			if restErr != nil && restErr != io.EOF {
+				return
+			}
+		}
+
+		payload := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimRight(lineBytes, "\r\n"), []byte(dataPrefix)))
+		var env sseEnvelope
+		if jsonErr := json.Unmarshal(payload, &env); jsonErr != nil || env.Type != "modelStatus" {
+			if readErr != nil {
+				return
+			}
+			continue
+		}
+		if !json.Valid([]byte(env.Data)) {
+			continue
+		}
+
+		if _, werr := io.WriteString(w, "event: modelStatus\n"); werr != nil {
+			return
+		}
+		if _, werr := io.WriteString(w, "data: "+env.Data+"\n\n"); werr != nil {
+			return
+		}
+		flusher.Flush()
+
+		if readErr != nil {
+			return
+		}
+	}
+}
+
 // HandleLlamaSwapLoadModel triggers a model load by sending a GET request to
 // llama-swap's /upstream/{id}/ endpoint.  llama-swap starts the model on the
 // first request routed to it; we discard the response body immediately rather
@@ -165,11 +291,14 @@ func (s *Server) HandleLlamaSwapLoadModel(w http.ResponseWriter, r *http.Request
 	// so we return 202 to the browser immediately and let polling track state.
 	url := strings.TrimRight(s.cfg.LlamaServerURL, "/") + "/upstream/" + id + "/"
 	go func() {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return
 		}
-		resp, err := http.DefaultClient.Do(req)
+		client := &http.Client{Timeout: 25 * time.Second}
+		resp, err := client.Do(req)
 		if err == nil {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
@@ -205,20 +334,24 @@ func (s *Server) HandleLlamaSwapUnloadModel(w http.ResponseWriter, r *http.Reque
 
 // proxyLlamaSwap forwards a request to the configured llama-swap server and
 // copies the response back to the client.
-func (s *Server) proxyLlamaSwap(w http.ResponseWriter, _ *http.Request, method, path string, body io.Reader) {
+func (s *Server) proxyLlamaSwap(w http.ResponseWriter, r *http.Request, method, path string, body io.Reader) {
 	if s.cfg.LlamaServerURL == "" {
 		http.Error(w, "llama-swap server not configured", http.StatusServiceUnavailable)
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+
 	url := strings.TrimRight(s.cfg.LlamaServerURL, "/") + path
-	req, err := http.NewRequest(method, url, body)
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
 		return

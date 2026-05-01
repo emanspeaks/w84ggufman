@@ -2,6 +2,7 @@ agenix
 AMDGPUVRAM
 APUs
 atopweb
+baseUrl
 Bavail
 bool
 btn-danger
@@ -27,6 +28,7 @@ gopls
 gotools
 HFURL
 HuggingFace
+importScripts
 inconfig
 Init
 iogpu
@@ -42,6 +44,7 @@ Mmproj
 modelsDir
 monospace
 MXFP
+mydir
 myhostname
 nctx
 nixos
@@ -76,7 +79,7 @@ uapi
 unsloth
 Upsert
 vtype
+werr
 yuin
 
-baseUrl
-importScripts
+Aa
