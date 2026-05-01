@@ -234,3 +234,84 @@ func (s *Server) proxyLlamaSwap(w http.ResponseWriter, _ *http.Request, method, 
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
+
+// HandleLlamaSwapSettings returns settings from the w84 config that the
+// frontend needs at startup (e.g. the log-pane history line count).
+func (s *Server) HandleLlamaSwapSettings(w http.ResponseWriter, r *http.Request) {
+	logLines := 30
+	if s.llamaSwap != nil {
+		logLines = s.llamaSwap.PresetLogLines()
+	}
+	writeJSON(w, map[string]any{"presetLogLines": logLines})
+}
+
+// HandleLlamaSwapLogStream proxies a live log stream from llama-swap.
+// The optional {id} path value maps to llama-swap's /logs/stream/*logMonitorID.
+// Model IDs with slashes (e.g. "author/model") are supported via the {id...}
+// multi-segment wildcard in the router.
+// The upstream ?no-history query param is forwarded as-is.
+func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request) {
+	if s.llamaSwap == nil {
+		http.Error(w, "llama-swap not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if s.cfg.LlamaServerURL == "" {
+		http.Error(w, "llama-swap server not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	path := "/logs/stream"
+	if id := r.PathValue("id"); id != "" {
+		path += "/" + id
+	}
+	if q := r.URL.RawQuery; q != "" {
+		path += "?" + q
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		strings.TrimRight(s.cfg.LlamaServerURL, "/")+path, nil)
+	if err != nil {
+		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Use a transport with no response timeout so the stream stays open.
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		http.Error(w, "llama-swap /logs/stream returned "+resp.Status+": "+string(body), http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // prevent nginx buffering
+	w.WriteHeader(http.StatusOK)
+
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// ensure time is used (imported for HandleLlamaSwapModels timeout)
+var _ = time.Second

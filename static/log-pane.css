@@ -1,0 +1,191 @@
+/* ── Log Pane — split layout + MaterialDark ANSI theme ──────────────────────
+ *
+ * MaterialDark palette (from mbadolato/iTerm2-Color-Schemes)
+ *   bg        #232322    fg        #e5e5e5
+ *   black     #212121    red       #b7141f    green     #457b24
+ *   yellow    #f6981e    blue      #134eb2    magenta   #701aa2
+ *   cyan      #0e717c    white     #efefef
+ *   br.black  #4f4f4f    br.red    #e83b3f    br.green  #7aba3a
+ *   br.yellow #ffea2e    br.blue   #54a4f3    br.magenta #aa4dbc
+ *   br.cyan   #26bbd1    br.white  #d9d9d9
+ *
+ * Terminal output uses these colors unconditionally (no light-mode override).
+ * Only the chrome (toolbar, resize handle) adapts to light/dark UI theme.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Split panel layout ──────────────────────────────────────────────────── */
+
+#presets-mode.active {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--top-chrome-height) - var(--bottom-chrome-height) - 1rem);
+  overflow: hidden;
+  padding: 0; margin: 0;
+}
+#presets-split {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0; overflow: hidden;
+}
+#presets-top-pane {
+  flex: 2; overflow-y: auto; min-height: 80px;
+}
+
+/* ── Resize handle ───────────────────────────────────────────────────────── */
+
+#presets-resize-handle {
+  flex: none; height: 6px;
+  background: #2a2a29;
+  border-top: 1px solid #3a3a38; border-bottom: 1px solid #3a3a38;
+  cursor: row-resize; transition: background 0.15s;
+}
+#presets-resize-handle:hover,
+#presets-resize-handle.dragging { background: #54a4f3; }
+#presets-resize-handle.log-pane-hidden { display: none; }
+
+/* ── Bottom pane container ───────────────────────────────────────────────── */
+
+#presets-bottom-pane {
+  flex: 1; display: flex; flex-direction: column;
+  min-height: 60px; overflow: hidden;
+}
+#presets-bottom-pane.log-pane-hidden {
+  flex: none; height: 0; min-height: 0; overflow: hidden;
+}
+
+/* ── Watch checkbox column ───────────────────────────────────────────────── */
+
+.presets-table .col-watch { width: 26px; padding-right: 0; }
+.watch-checkbox { cursor: pointer; }
+
+/* ── Log pane toolbar ────────────────────────────────────────────────────── */
+
+.log-pane-header {
+  flex: none; display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 8px;
+  background: #2a2a29;
+  border-bottom: 1px solid #3a3a38;
+  font-size: 0.8rem; font-weight: 600;
+}
+.log-pane-title {
+  color: #9e9e9e;
+  font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.log-pane-actions { display: flex; align-items: center; gap: 2px; }
+
+.log-pane-btn {
+  background: none; border: none; cursor: pointer;
+  color: #666663; padding: 3px 5px; border-radius: 4px;
+  display: flex; align-items: center; gap: 3px;
+  font-size: 0.7rem; line-height: 1;
+  transition: background 0.1s, color 0.1s;
+}
+.log-pane-btn:hover { background: #3a3a38; color: #e5e5e5; }
+.log-pane-btn.active { color: #54a4f3; background: #1c1c1b; }
+.log-pane-btn svg { flex-shrink: 0; }
+
+/* ── Filter row ──────────────────────────────────────────────────────────── */
+
+.log-pane-filter-row {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px;
+  background: #1c1c1b;
+  border-bottom: 1px solid #3a3a38;
+}
+.log-pane-filter-input {
+  flex: 1;
+  background: #181817; border: 1px solid #3a3a38;
+  color: #e5e5e5; font-size: 0.75rem; padding: 3px 7px;
+  border-radius: 4px; outline: none;
+  font-family: inherit;
+}
+.log-pane-filter-input::placeholder { color: #4f4f4f; }
+.log-pane-filter-input:focus { border-color: #54a4f3; }
+.log-pane-filter-input.filter-invalid { border-color: #e83b3f; }
+.log-pane-filter-clear {
+  background: none; border: none; cursor: pointer;
+  color: #666663; padding: 2px; border-radius: 3px;
+  line-height: 1; display: flex; align-items: center;
+}
+.log-pane-filter-clear:hover { color: #e83b3f; }
+
+/* ── Log output area ─────────────────────────────────────────────────────── */
+
+#presets-log-output {
+  flex: 1; overflow-y: auto; overflow-x: auto;
+  margin: 0; padding: 6px 10px;
+  background: #232322;
+  color: #e5e5e5;
+  font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+  font-size: 0.72rem; line-height: 1.55;
+  white-space: pre;
+}
+
+/* Font size steps — cycled by the Aa button */
+#presets-log-output.log-size-xxs { font-size: 0.5rem; }
+#presets-log-output.log-size-xs  { font-size: 0.625rem; }
+#presets-log-output.log-size-sm  { font-size: 0.75rem; }
+/* (default = 0.72rem; log-size-normal resets to default) */
+
+#presets-log-output.log-wrap { white-space: pre-wrap; word-break: break-all; }
+
+/* ── MaterialDark ANSI foreground colours (SGR 30-37, 90-97) ────────────── */
+
+.ansi-fg-0  { color: #212121; }   /* black         */
+.ansi-fg-1  { color: #b7141f; }   /* red           */
+.ansi-fg-2  { color: #457b24; }   /* green         */
+.ansi-fg-3  { color: #f6981e; }   /* yellow        */
+.ansi-fg-4  { color: #134eb2; }   /* blue          */
+.ansi-fg-5  { color: #701aa2; }   /* magenta       */
+.ansi-fg-6  { color: #0e717c; }   /* cyan          */
+.ansi-fg-7  { color: #efefef; }   /* white         */
+.ansi-fg-8  { color: #4f4f4f; }   /* bright black  */
+.ansi-fg-9  { color: #e83b3f; }   /* bright red    */
+.ansi-fg-10 { color: #7aba3a; }   /* bright green  */
+.ansi-fg-11 { color: #ffea2e; }   /* bright yellow */
+.ansi-fg-12 { color: #54a4f3; }   /* bright blue   */
+.ansi-fg-13 { color: #aa4dbc; }   /* bright magenta*/
+.ansi-fg-14 { color: #26bbd1; }   /* bright cyan   */
+.ansi-fg-15 { color: #d9d9d9; }   /* bright white  */
+
+/* ── MaterialDark ANSI background colours (SGR 40-47, 100-107) ──────────── */
+
+.ansi-bg-0  { background: #212121; }
+.ansi-bg-1  { background: #b7141f; }
+.ansi-bg-2  { background: #457b24; }
+.ansi-bg-3  { background: #f6981e; }
+.ansi-bg-4  { background: #134eb2; }
+.ansi-bg-5  { background: #701aa2; }
+.ansi-bg-6  { background: #0e717c; }
+.ansi-bg-7  { background: #efefef; }
+.ansi-bg-8  { background: #4f4f4f; }
+.ansi-bg-9  { background: #e83b3f; }
+.ansi-bg-10 { background: #7aba3a; }
+.ansi-bg-11 { background: #ffea2e; }
+.ansi-bg-12 { background: #54a4f3; }
+.ansi-bg-13 { background: #aa4dbc; }
+.ansi-bg-14 { background: #26bbd1; }
+.ansi-bg-15 { background: #d9d9d9; }
+
+/* ── ANSI text decorations ───────────────────────────────────────────────── */
+
+.ansi-bold      { font-weight: bold; }
+.ansi-dim       { opacity: 0.5; }
+.ansi-italic    { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+.ansi-blink     { animation: ansi-blink 1s step-end infinite; }
+@keyframes ansi-blink { 50% { opacity: 0; } }
+.ansi-reverse   { filter: invert(1); }
+
+/* ── Light theme — chrome only; terminal output is always MaterialDark ────── */
+
+html.light #presets-resize-handle          { background: #d4d4d2; border-color: #b8b8b5; }
+html.light #presets-resize-handle:hover,
+html.light #presets-resize-handle.dragging { background: #54a4f3; }
+html.light .log-pane-header                { background: #e8e8e6; border-color: #c8c8c5; }
+html.light .log-pane-title                 { color: #5a5a58; }
+html.light .log-pane-btn                   { color: #888885; }
+html.light .log-pane-btn:hover             { background: #c8c8c5; color: #232322; }
+html.light .log-pane-btn.active            { color: #134eb2; background: #dde8f8; }
+html.light .log-pane-filter-row            { background: #f0f0ee; border-color: #c8c8c5; }
+html.light .log-pane-filter-input          { background: #ffffff; border-color: #c8c8c5; color: #232322; }
+/* #presets-log-output intentionally stays MaterialDark regardless of UI theme */
