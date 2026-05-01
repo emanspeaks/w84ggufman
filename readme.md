@@ -6,6 +6,10 @@ A self-contained Go web application for managing GGUF model files used by a
 
 ## Features
 
+- **Presets panel** (default view) — live table of every model preset known to
+  llama-swap with real-time state badges (`ready`, `starting`, `stopping`,
+  `stopped`).  Load and unload individual models or all at once; peer-model
+  groups are shown in a separate section.  State auto-refreshes every 5 s.
 - **Browse and download** GGUF models from HuggingFace — paste a repo ID, select
   quantizations via checkboxes, and stream the download in real time
 - **Incremental sync** — already-downloaded files are pre-checked; uncheck a file
@@ -13,7 +17,9 @@ A self-contained Go web application for managing GGUF model files used by a
 - **Model card panel** — render the repo README alongside quant selection
 - **View local models** as repo-level cards with total size, file count, and
   loaded/unloaded status (cross-referenced against `/v1/models` on your llama-server)
-- **Delete repos and local-only files** directly from the UI
+- **Delete repos and local-only files** — enable deletion via the "Allow delete"
+  checkbox that appears in the Local Models header, then use the trash-can button
+  on each card
 - **Built-in editors** for `models.ini` or `config.yaml` (llama-swap mode), plus
   llama-swap command templates
 - **Manually restart** the llama-server from the UI at any time

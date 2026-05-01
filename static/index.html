@@ -15,6 +15,11 @@
   </div>
 </div>
 <header>
+  <button id="hamburger-menu" class="hamburger-btn" title="Menu">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+      <path d="M3 12h18M3 6h18M3 18h18"/>
+    </svg>
+  </button>
   <div class="header-title">
     <h1>w84ggufman<small>GGUF Manager</small></h1>
     <span id="app-version"></span>
@@ -57,12 +62,44 @@
     <span class="theme-icon">☀</span>
   </button>
 </header>
-<main>
+
+<div id="left-menu" class="left-menu">
+  <div class="left-menu-header">
+    <h3>Mode</h3>
+  </div>
+  <div class="left-menu-content">
+    <button class="menu-option active" data-mode="presets">Presets</button>
+    <button class="menu-option" data-mode="models">Models</button>
+  </div>
+</div>
+
+<div id="main-content">
+  <!-- Presets Mode -->
+  <div id="presets-mode" class="mode-content">
+    <section>
+      <div class="section-header">
+        <h2>Model Presets</h2>
+        <button class="btn-secondary" id="refresh-presets-btn">Refresh</button>
+      </div>
+      <div id="presets-error" class="msg-error" style="display:none"></div>
+      <div id="presets-list"><p class="msg-loading">Loading presets…</p></div>
+    </section>
+  </div>
+
+  <!-- Models Mode -->
+  <div id="models-mode" class="mode-content" style="display:none">
+    <main>
   <!-- Left panel: Local Models -->
   <section>
     <div class="section-header">
       <h2>Local Models</h2>
-      <button class="btn-secondary" id="refresh-btn">Refresh</button>
+      <div class="header-controls">
+        <label class="checkbox-label">
+          <input type="checkbox" id="allow-delete-checkbox">
+          Allow delete
+        </label>
+        <button class="btn-secondary" id="refresh-btn">Refresh</button>
+      </div>
     </div>
     <div id="local-error" class="msg-error" style="display:none"></div>
     <div id="local-list"><p class="msg-loading">Loading…</p></div>
@@ -101,6 +138,8 @@
     </div>
   </section>
 </main>
+  </div>
+</div>
 
 <!-- Status bar -->
 <div id="status-bar">
@@ -119,25 +158,7 @@
 </div>
 
 <!-- Monaco Editor (VS Code's editor) -->
-<script>
-  // Workers can't load cross-origin directly; bootstrap them via a data URI
-  // that sets baseUrl and importScripts the actual worker bundle.
-  self.MonacoEnvironment = {
-    getWorkerUrl: function () {
-      return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
-        "self.MonacoEnvironment = { baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/' };" +
-        "importScripts('https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/base/worker/workerMain.js');"
-      );
-    },
-  };
-</script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
-<script>
-  require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
-  window.monacoReady = new Promise(function (resolve) {
-    require(['vs/editor/editor.main'], function () { resolve(window.monaco); });
-  });
-</script>
+<script src="/monaco-setup.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
