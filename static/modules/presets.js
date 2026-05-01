@@ -213,25 +213,19 @@ function startLogStream(modelId) {
     try {
       const resp = await fetch(`/api/llamaswap/logs/stream/${path}`, { signal: ctrl.signal });
       if (!resp.ok) {
-        appendLogLine(modelId, `[stream error: HTTP ${resp.status}]`);
+        feedChunk(modelId, `[stream error: HTTP ${resp.status}]\n`);
         return;
       }
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
-      let partial = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        partial += decoder.decode(value, { stream: true });
-        const lines = partial.split('\n');
-        partial = lines.pop(); // last item may be incomplete
-        for (const line of lines) {
-          if (line !== '') appendLogLine(modelId, line);
-        }
+        feedChunk(modelId, decoder.decode(value, { stream: true }));
       }
-      if (partial) appendLogLine(modelId, partial);
+      finalizeLiveLine(modelId);
     } catch (e) {
-      if (e.name !== 'AbortError') appendLogLine(modelId, `[stream closed: ${e.message}]`);
+      if (e.name !== 'AbortError') feedChunk(modelId, `[stream closed: ${e.message}]\n`);
     }
   })();
 }
@@ -239,6 +233,7 @@ function startLogStream(modelId) {
 function stopLogStream(modelId) {
   const ctrl = activeStreams.get(modelId);
   if (ctrl) { ctrl.abort(); activeStreams.delete(modelId); }
+  finalizeLiveLine(modelId);
 }
 
 function stopAllLogStreams() {
@@ -246,54 +241,98 @@ function stopAllLogStreams() {
   activeStreams.clear();
 }
 
+// ── Real-time chunk-based log feeding ────────────────────────────────────────
+// Each model has a "live" (in-progress) entry at the tail of its buffer.
+// Characters append to it in real time.  \n finalizes the entry and opens a
+// new one.  \r resets the live entry's content (progress-bar carriage return).
+// When logInPlace is off, \r is treated the same as \n.
+
+let renderScheduled = false;
+function scheduleRender() {
+  if (!renderScheduled) {
+    renderScheduled = true;
+    requestAnimationFrame(() => { renderScheduled = false; renderLogPane(); });
+  }
+}
+
+function ensureLiveLine(buf) {
+  if (buf.length === 0 || buf[buf.length - 1].finalized) {
+    buf.push({ seq: globalSeq++, ts: '', tsMs: 0, line: '', finalized: false });
+  }
+  return buf[buf.length - 1];
+}
+
+function finalizeLiveLine(modelId) {
+  const buf = modelBuffers.get(modelId);
+  if (!buf || buf.length === 0) return;
+  const live = buf[buf.length - 1];
+  if (live.finalized) return;
+  if (!live.line.trim()) { buf.pop(); }
+  else { live.finalized = true; }
+  scheduleRender();
+}
+
 function stripNonSgrAnsi(s) {
-  // Remove all CSI sequences whose final byte is NOT 'm' (SGR/colour).
-  // This strips \x1b[K (erase EOL), \x1b[2K (erase line), cursor movement, etc.
-  // Leaves \x1b[...m intact so parseAnsiLine can still colour the text.
+  // Remove CSI sequences whose final byte is NOT 'm' (SGR/colour):
+  // \x1b[K (erase EOL), cursor movement, etc.  SGR colour codes are kept.
   return s.replace(/\x1b\[[\d;]*[A-Za-ln-z@\[\\\]^_`{|}~]/g, '');
 }
 
-function appendLogLine(modelId, rawLine) {
-  let inPlace = false;
-  let line;
-  if (rawLine.includes('\r')) {
-    // Take the last \r-terminated segment (simulates terminal cursor-home overwrite)
-    const parts = rawLine.split('\r').filter(s => s.length > 0);
-    line = parts.length ? parts[parts.length - 1] : '';
-    inPlace = logInPlace;
-  } else {
-    line = rawLine;
-  }
-  // Strip non-colour ANSI control sequences before storing
-  line = stripNonSgrAnsi(line);
-  if (!line.trim()) return;
-  const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+function feedChunk(modelId, rawChunk) {
+  const chunk = stripNonSgrAnsi(rawChunk);
+  if (!chunk) return;
   let buf = modelBuffers.get(modelId);
   if (!buf) { buf = []; modelBuffers.set(modelId, buf); }
-  if (inPlace && buf.length > 0 && buf[buf.length - 1].inPlace) {
-    // Only overwrite when the previous entry was itself a progress-bar entry.
-    // This prevents in-place mode from clobbering a normal log line that
-    // immediately preceded the progress bar (e.g. the "EasyCache enabled" line).
-    const last = buf[buf.length - 1];
-    last.line = line;
-    last.ts = ts;
-  } else {
-    buf.push({ seq: globalSeq++, ts, line, inPlace });
-    if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+
+  const stamp = (entry) => {
+    const ms = Date.now();
+    entry.tsMs = ms;
+    entry.ts = new Date(ms).toLocaleTimeString('en-US', { hour12: false });
+  };
+
+  // Split on \n and \r, keeping the delimiters so we can handle each type.
+  const parts = chunk.split(/(\n|\r)/);
+  for (const part of parts) {
+    if (part === '\n') {
+      // Finalize the live line.
+      const live = ensureLiveLine(buf);
+      stamp(live);
+      live.finalized = true;
+      if (!live.line.trim()) buf.pop(); // discard empty lines
+      if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+    } else if (part === '\r') {
+      if (logInPlace) {
+        // Carriage return: reset the live line's content but keep its slot.
+        const live = ensureLiveLine(buf);
+        live.line = '';
+        stamp(live);
+      } else {
+        // Treat \r as \n when in-place is off.
+        const live = ensureLiveLine(buf);
+        stamp(live);
+        live.finalized = true;
+        if (!live.line.trim()) buf.pop();
+        if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+      }
+    } else if (part) {
+      const live = ensureLiveLine(buf);
+      live.line += part;
+      stamp(live);
+    }
   }
-  renderLogPane();
+  scheduleRender();
 }
 
 function renderLogPane() {
   const out = document.getElementById('presets-log-output');
   if (!out) return;
 
-  // Merge all watched-model buffers, sorted by insertion sequence.
+  // Merge all watched-model buffers, sorted by most recent update time.
   const all = [];
   for (const [modelId, buf] of modelBuffers) {
-    for (const e of buf) all.push({ modelId, seq: e.seq, ts: e.ts, line: e.line });
+    for (const e of buf) all.push({ modelId, seq: e.seq, ts: e.ts, tsMs: e.tsMs || 0, line: e.line });
   }
-  all.sort((a, b) => a.seq - b.seq);
+  all.sort((a, b) => (a.tsMs - b.tsMs) || (a.seq - b.seq));
 
   // Apply regex filter.
   const filterVal = document.getElementById('log-filter-input')?.value || '';
