@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -57,30 +58,77 @@ func (s *Server) HandleLlamaSwapModels(w http.ResponseWriter, r *http.Request) {
 
 	// SSE envelope: {"type":"modelStatus","data":"[{...}]"}
 	// The inner "data" value is a JSON-encoded string containing []Model.
+	//
+	// llama-swap emits large logData events (proxy + upstream log history) before
+	// the modelStatus event.  We use ReadSlice, which reuses the internal buffer
+	// without allocating, to identify each line type.  Only when we spot a
+	// modelStatus line do we copy bytes into a real allocation.
 	type sseEnvelope struct {
 		Type string `json:"type"`
 		Data string `json:"data"`
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	const modelStatusMark = `"modelStatus"`
+	const dataPrefix = "data:"
+	reader := bufio.NewReaderSize(resp.Body, 4096)
+
+	// drainLine discards the rest of the current line without allocating.
+	drainLine := func() error {
+		for {
+			_, err := reader.ReadSlice('\n')
+			if err != bufio.ErrBufferFull {
+				return err
+			}
+		}
+	}
+
+	for {
+		// ReadSlice returns a slice of the internal buffer — zero allocation.
+		// If the line is longer than the buffer, err == io.ErrBufferFull.
+		head, readErr := reader.ReadSlice('\n')
+		isFullLine := readErr != bufio.ErrBufferFull
+
+		isDataLine := bytes.HasPrefix(bytes.TrimSpace(head), []byte(dataPrefix))
+		looksLikeModelStatus := isDataLine && bytes.Contains(head, []byte(modelStatusMark))
+
+		if !looksLikeModelStatus {
+			if !isFullLine {
+				// Long non-modelStatus line (e.g. logData history): drain without allocating.
+				if drainErr := drainLine(); drainErr != nil {
+					if drainErr != io.EOF {
+						http.Error(w, "error reading llama-swap event stream: "+drainErr.Error(), http.StatusBadGateway)
+						return
+					}
+					break
+				}
+				continue
+			}
+			if readErr != nil { // EOF at end of a complete line
+				break
+			}
 			continue
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
+
+		// Potential modelStatus line — copy head before the next ReadSlice call
+		// invalidates the buffer, then read any remaining bytes if the line was cut.
+		lineBytes := append([]byte{}, head...)
+		if !isFullLine {
+			rest, restErr := reader.ReadString('\n')
+			lineBytes = append(lineBytes, rest...)
+			if restErr != nil && restErr != io.EOF {
+				http.Error(w, "error reading llama-swap event stream: "+restErr.Error(), http.StatusBadGateway)
+				return
+			}
 		}
+
+		payload := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimRight(lineBytes, "\r\n"), []byte(dataPrefix)))
 		var env sseEnvelope
-		if err := json.Unmarshal([]byte(payload), &env); err != nil {
+		if jsonErr := json.Unmarshal(payload, &env); jsonErr != nil || env.Type != "modelStatus" {
+			if readErr != nil {
+				break
+			}
 			continue
 		}
-		if env.Type != "modelStatus" {
-			continue
-		}
-		// env.Data is a JSON-encoded string; validate it's a JSON array then
-		// write it directly.
 		if !json.Valid([]byte(env.Data)) {
 			http.Error(w, "malformed modelStatus payload from llama-swap", http.StatusBadGateway)
 			return
@@ -89,11 +137,12 @@ func (s *Server) HandleLlamaSwapModels(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(env.Data))
 		return
 	}
-	if err := scanner.Err(); err != nil && err != context.DeadlineExceeded {
-		http.Error(w, "error reading llama-swap event stream: "+err.Error(), http.StatusBadGateway)
-		return
+
+	if ctx.Err() != nil {
+		http.Error(w, "timed out waiting for modelStatus from llama-swap", http.StatusBadGateway)
+	} else {
+		http.Error(w, "llama-swap event stream closed without modelStatus", http.StatusBadGateway)
 	}
-	http.Error(w, "llama-swap event stream closed without modelStatus", http.StatusBadGateway)
 }
 
 // HandleLlamaSwapLoadModel triggers a model load by sending a GET request to
@@ -110,25 +159,22 @@ func (s *Server) HandleLlamaSwapLoadModel(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid model id", http.StatusBadRequest)
 		return
 	}
-	// Fire-and-forget GET with a short context so we return quickly after
-	// llama-swap acknowledges the request (or starts the process).
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/upstream/"+id+"/", nil)
-	if err != nil {
-		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil && ctx.Err() == nil {
-		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	if resp != nil {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}
+	// llama-swap starts the model on the first request to /upstream/{id}/ and
+	// proxies it all the way through to the running model before responding.
+	// That can take many seconds while the model loads.  Fire it in a goroutine
+	// so we return 202 to the browser immediately and let polling track state.
+	url := strings.TrimRight(s.cfg.LlamaServerURL, "/") + "/upstream/" + id + "/"
+	go func() {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+	}()
 	w.WriteHeader(http.StatusAccepted)
 }
 

@@ -139,9 +139,11 @@ function modelRow(model) {
     ? `<button class="btn-secondary btn--sm load-btn" data-model-id="${esc(model.id)}">Load</button>`
     : `<button class="btn-secondary btn--sm unload-btn" data-model-id="${esc(model.id)}"${!canUnload ? ' disabled' : ''}>${inTransition ? '…' : 'Unload'}</button>`;
 
+  const rowClass = ['row--' + (model.state || 'unknown'), model.unlisted ? 'row--unlisted' : ''].filter(Boolean).join(' ');
+
   return `
-    <tr>
-      <td class="${model.unlisted ? 'text-secondary' : ''}">
+    <tr class="${rowClass}">
+      <td>
         <div class="model-info">
           <span class="model-id">${esc(displayName)}</span>
           ${model.description ? `<p class="model-desc"><em>${esc(model.description)}</em></p>` : ''}
@@ -155,13 +157,15 @@ function modelRow(model) {
 }
 
 async function loadModel(modelId) {
-  try {
-    const resp = await fetch(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' });
-    if (!resp.ok) throw new Error(await resp.text());
-    fetchPresets();
-  } catch (e) {
-    showErr('presets-error', 'Failed to load model: ' + e.message);
-  }
+  // Disable the button immediately so the UI doesn't feel frozen.
+  const btn = document.querySelector(`.load-btn[data-model-id="${modelId}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  // Fire-and-forget — the backend returns 202 immediately while llama-swap
+  // loads the model in the background.  Polling will pick up state changes.
+  fetch(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' })
+    .catch(e => showErr('presets-error', 'Failed to load model: ' + e.message));
+  // Trigger a refresh after a short delay to show the "starting" state quickly.
+  setTimeout(fetchPresets, 800);
 }
 
 async function unloadModel(modelId) {
