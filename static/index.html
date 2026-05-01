@@ -158,25 +158,7 @@
 </div>
 
 <!-- Monaco Editor (VS Code's editor) -->
-<script>
-  // Workers can't load cross-origin directly; bootstrap them via a data URI
-  // that sets baseUrl and importScripts the actual worker bundle.
-  self.MonacoEnvironment = {
-    getWorkerUrl: function () {
-      return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
-        "self.MonacoEnvironment = { baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/' };" +
-        "importScripts('https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/base/worker/workerMain.js');"
-      );
-    },
-  };
-</script>
-<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
-<script>
-  require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
-  window.monacoReady = new Promise(function (resolve) {
-    require(['vs/editor/editor.main'], function () { resolve(window.monaco); });
-  });
-</script>
+<script src="/monaco-setup.js"></script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

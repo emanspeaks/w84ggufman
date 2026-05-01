@@ -77,3 +77,6 @@ unsloth
 Upsert
 vtype
 yuin
+
+baseUrl
+importScripts
