@@ -21,6 +21,12 @@ export async function fetchPresets() {
   clearErr('presets-error');
   try {
     const resp = await fetch('/api/llamaswap/models');
+    if (resp.status === 503) {
+      document.getElementById('presets-list').innerHTML =
+        '<p class="msg-empty">llama-swap is not configured — presets are only available when running in llama-swap mode.</p>';
+      stopPresetsPolling();
+      return;
+    }
     if (!resp.ok) throw new Error(await resp.text());
     const models = await resp.json();
     // Sort: regular models A–Z, peer models appended after.
