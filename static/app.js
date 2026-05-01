@@ -15,6 +15,7 @@ import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL, llamaServ
 import { cancelDownload } from './modules/download.js';
 import { openFullConfigModal, openW84ConfigModal } from './modules/config-modal.js';
 import { openDiskTreemap } from './modules/disk-treemap.js';
+import { fetchPresets, startPresetsPolling, stopPresetsPolling } from './modules/presets.js';
 
 function syncChromeLayoutVars() {
   const root = document.documentElement;
@@ -53,6 +54,60 @@ function setupChromeLayoutSync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MENU AND MODE MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+function setupMenuAndModes() {
+  const hamburgerBtn = document.getElementById('hamburger-menu');
+  const leftMenu = document.getElementById('left-menu');
+  const menuOptions = document.querySelectorAll('.menu-option');
+  const presetsMode = document.getElementById('presets-mode');
+  const modelsMode = document.getElementById('models-mode');
+
+  // Hamburger menu toggle
+  hamburgerBtn.addEventListener('click', () => {
+    leftMenu.classList.toggle('open');
+  });
+
+  // Close menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!leftMenu.contains(e.target) && !hamburgerBtn.contains(e.target)) {
+      leftMenu.classList.remove('open');
+    }
+  });
+
+  // Mode switching
+  menuOptions.forEach(option => {
+    option.addEventListener('click', () => {
+      const mode = option.dataset.mode;
+      switchMode(mode);
+      menuOptions.forEach(opt => opt.classList.remove('active'));
+      option.classList.add('active');
+      leftMenu.classList.remove('open');
+    });
+  });
+
+  // Default to presets mode
+  switchMode('presets');
+}
+
+function switchMode(mode) {
+  const presetsMode = document.getElementById('presets-mode');
+  const modelsMode = document.getElementById('models-mode');
+
+  if (mode === 'presets') {
+    presetsMode.classList.add('active');
+    modelsMode.classList.remove('active');
+    fetchPresets();
+    startPresetsPolling();
+  } else if (mode === 'models') {
+    stopPresetsPolling();
+    modelsMode.classList.add('active');
+    presetsMode.classList.remove('active');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // INITIALIZATION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -67,9 +122,12 @@ setupRepoBrowser();
 setupRestartButtons();
 setupChromeLayoutSync();
 
+// Menu and mode setup
+setupMenuAndModes();
+
 // Action button listeners
-document.getElementById('refresh-btn').addEventListener('click', () => {
-  fetchLocalModels();
+document.getElementById('refresh-presets-btn').addEventListener('click', () => {
+  fetchPresets();
   pollStatus();
 });
 

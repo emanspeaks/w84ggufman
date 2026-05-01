@@ -2,6 +2,18 @@
 
 import { esc, formatBytes, clearErr, showErr } from './utils.js';
 
+let allowDelete = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+  const checkbox = document.getElementById('allow-delete-checkbox');
+  if (checkbox) {
+    checkbox.addEventListener('change', () => {
+      allowDelete = checkbox.checked;
+      fetchLocalModels(); // Re-render with new state
+    });
+  }
+});
+
 export async function fetchLocalModels() {
   clearErr('local-error');
   try {
@@ -94,7 +106,7 @@ export function renderLocalModels(models) {
         <span class="model-loaded-row">${loadedHtml}</span>
       </div>
       <div class="model-actions">
-        <button class="btn-danger delete-btn">Delete</button>
+        ${allowDelete ? '<button class="btn-danger delete-btn" title="Delete model"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 6v18h18v-18h-18zm5 14c0 .552-.448 1-1 1s-1-.448-1-1v-10c0-.552.448-1 1-1s1 .448 1 1v10zm5 0c0 .552-.448 1-1 1s-1-.448-1-1v-10c0-.552.448-1 1-1s1 .448 1 1v10zm5 0c0 .552-.448 1-1 1s-1-.448-1-1v-10c0-.552.448-1 1-1s1 .448 1 1v10zm4-18v2h-20v-2h5.711c.9 0 1.631-1.099 1.631-2h5.315c0 .901.73 2 1.631 2h5.712z"/></svg></button>' : ''}
       </div>
     `;
 
@@ -113,7 +125,9 @@ export function renderLocalModels(models) {
       }
     });
 
-    card.querySelector('.delete-btn').addEventListener('click', () => deleteRepo(m.repoId, m.path));
+    if (allowDelete) {
+      card.querySelector('.delete-btn').addEventListener('click', () => deleteRepo(m.repoId, m.path));
+    }
     list.appendChild(card);
   }
 }
