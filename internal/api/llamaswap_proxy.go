@@ -238,7 +238,7 @@ func (s *Server) proxyLlamaSwap(w http.ResponseWriter, _ *http.Request, method, 
 // HandleLlamaSwapSettings returns settings from the w84 config that the
 // frontend needs at startup (e.g. the log-pane history line count).
 func (s *Server) HandleLlamaSwapSettings(w http.ResponseWriter, r *http.Request) {
-	logLines := 30
+	logLines := 500
 	if s.llamaSwap != nil {
 		logLines = s.llamaSwap.PresetLogLines()
 	}
