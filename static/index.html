@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>w84ggufman</title>
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/log-pane.css">
 </head>
 <body>
 <div id="version-banner" style="display:none">
@@ -76,14 +77,31 @@
 <div id="main-content">
   <!-- Presets Mode -->
   <div id="presets-mode" class="mode-content">
-    <section>
-      <div class="section-header">
-        <h2>Model Presets</h2>
-        <button class="btn-secondary" id="refresh-presets-btn">Refresh</button>
+    <div id="presets-split">
+      <div id="presets-top-pane">
+        <section>
+          <div class="section-header">
+            <h2>Model Presets</h2>
+            <button class="btn-secondary" id="refresh-presets-btn">Refresh</button>
+          </div>
+          <div id="presets-error" class="msg-error" style="display:none"></div>
+          <div id="presets-list"><p class="msg-loading">Loading presets…</p></div>
+        </section>
       </div>
-      <div id="presets-error" class="msg-error" style="display:none"></div>
-      <div id="presets-list"><p class="msg-loading">Loading presets…</p></div>
-    </section>
+      <div id="presets-resize-handle" title="Drag to resize"></div>
+      <div id="presets-bottom-pane">
+        <div class="log-pane-header">
+          <span class="log-pane-title">Upstream Logs</span>
+          <div class="log-pane-actions">
+            <label class="checkbox-label">
+              <input type="checkbox" id="log-wrap-checkbox"> Wrap
+            </label>
+            <button class="btn-secondary btn--sm" id="clear-logs-btn">Clear</button>
+          </div>
+        </div>
+        <pre id="presets-log-output"></pre>
+      </div>
+    </div>
   </div>
 
   <!-- Models Mode -->

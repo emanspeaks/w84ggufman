@@ -24,7 +24,8 @@ func newLlamaSwapManager(cfg Config) *llamaSwapManager {
 // w84Config holds the w84ggufman-specific configuration stored in
 // .w84ggufman.yaml in the models root directory.
 type w84Config struct {
-	Templates map[string]string `yaml:"templates,omitempty"`
+	Templates      map[string]string `yaml:"templates,omitempty"`
+	PresetLogLines int               `yaml:"presetLogLines,omitempty"` // lines of log history to show in Presets log pane; default 30
 }
 
 func (m *llamaSwapManager) w84ConfigPath() string {
@@ -41,12 +42,21 @@ func (m *llamaSwapManager) loadW84Config() w84Config {
 	return cfg
 }
 
+func (m *llamaSwapManager) getPresetLogLines() int {
+	if n := m.loadW84Config().PresetLogLines; n > 0 {
+		return n
+	}
+	return 30
+}
+
 // defaultW84ConfigYAML is shown when no .w84ggufman.yaml file exists yet.
 const defaultW84ConfigYAML = `# ignore: override the default root-level ignore patterns (.cache, .w84ggufman*)
 # ignore:
 #   - ".cache"
 #   - ".w84ggufman*"
 #   - "mydir"
+
+# presetLogLines: 30   # lines of log history shown per model in the Presets log pane
 
 templates:
   llm: |

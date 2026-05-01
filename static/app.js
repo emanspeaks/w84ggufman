@@ -15,7 +15,7 @@ import { pollStatus, setupStatusPolling, llamaSwapEnabled, atopwebURL, llamaServ
 import { cancelDownload } from './modules/download.js';
 import { openFullConfigModal, openW84ConfigModal } from './modules/config-modal.js';
 import { openDiskTreemap } from './modules/disk-treemap.js';
-import { fetchPresets, startPresetsPolling, stopPresetsPolling } from './modules/presets.js';
+import { fetchPresets, startPresetsPolling, stopPresetsPolling, setupPresets } from './modules/presets.js';
 
 function syncChromeLayoutVars() {
   const root = document.documentElement;
@@ -124,6 +124,7 @@ setupChromeLayoutSync();
 
 // Menu and mode setup
 setupMenuAndModes();
+setupPresets();
 
 // Action button listeners
 document.getElementById('refresh-presets-btn').addEventListener('click', () => {

@@ -739,7 +739,18 @@ html.light .resource-bar { background: #e2e8f0; }
 }
 .model-id {
   font-weight: 500; color: #f1f5f9;
+  display: inline-flex; align-items: center; gap: 5px;
 }
+.upstream-link {
+  display: inline-flex; align-items: center;
+  color: #475569; opacity: 0.6; text-decoration: none;
+  border-radius: 3px; padding: 1px 2px;
+  transition: opacity 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.upstream-link:hover { opacity: 1; color: #93c5fd; }
+html.light .upstream-link { color: #94a3b8; }
+html.light .upstream-link:hover { color: #2563eb; }
 .model-desc {
   font-size: 0.8rem; color: #94a3b8; margin: 0;
 }

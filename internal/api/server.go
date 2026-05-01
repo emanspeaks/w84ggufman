@@ -102,6 +102,7 @@ type LlamaSwapManager interface {
 	WriteW84Config(body string) error
 	ReadAll() (string, error)
 	WriteAll(body string) error
+	PresetLogLines() int
 }
 
 type Dependencies struct {

@@ -1,19 +1,21 @@
-// Model presets display — mirrors llama-swap's ModelsPanel.svelte in plain JS.
+﻿// Model presets display — mirrors llama-swap's ModelsPanel in plain JS.
 //
-// Data source: llama-swap's GET /api/models/ endpoint (proxied via our backend
-// at /api/llamaswap/models).  Each entry has: id, name, description, state,
-// unlisted, aliases[], peerID.
+// Data source: GET /api/llamaswap/models  (SSE-based, returns []Model)
+// Log streams:  GET /api/llamaswap/logs/stream/{model_id}
 //
-// State values: "ready" | "starting" | "stopping" | "stopped" | "shutdown" | "unknown"
-// Load  model: POST /api/llamaswap/models/load/{id}
-// Unload one : POST /api/llamaswap/models/unload/{id}
-// Unload all : POST /api/llamaswap/models/unload
+// Model states: "ready" | "starting" | "stopping" | "stopped" | "shutdown" | "unknown"
+// Load  model:  POST /api/llamaswap/models/load/{id}
+// Unload one:   POST /api/llamaswap/models/unload/{id}
+// Unload all:   POST /api/llamaswap/models/unload
 
 import { esc, clearErr, showErr } from './utils.js';
+import { llamaServerURL } from './status-polling.js';
 
-// Preserve "show unlisted" preference across re-renders.
+// ── Persistent UI state ───────────────────────────────────────────────────────
 let showUnlisted = true;
-// Polling timer handle — cleared when the panel is not visible.
+const watchedModels = new Set(); // model IDs whose log checkbox is checked
+
+// ── Polling ───────────────────────────────────────────────────────────────────
 let pollTimer = null;
 const POLL_INTERVAL_MS = 5000;
 
@@ -29,7 +31,6 @@ export async function fetchPresets() {
     }
     if (!resp.ok) throw new Error(await resp.text());
     const models = await resp.json();
-    // Sort: regular models A–Z, peer models appended after.
     models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
     renderPresets(models);
   } catch (e) {
@@ -47,8 +48,138 @@ export function stopPresetsPolling() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  stopAllLogStreams();
 }
 
+// ── One-time setup (called from app.js on DOMContentLoaded) ──────────────────
+export function setupPresets() {
+  setupPresetsResize();
+  setupLogPaneControls();
+  // Fetch backend settings (e.g. presetLogLines) asynchronously.
+  fetch('/api/llamaswap/settings')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => { if (data?.presetLogLines > 0) maxLogLines = data.presetLogLines; })
+    .catch(() => {});
+}
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+function setupPresetsResize() {
+  const handle = document.getElementById('presets-resize-handle');
+  const topPane = document.getElementById('presets-top-pane');
+  if (!handle || !topPane) return;
+
+  let dragging = false, startY = 0, startTopH = 0;
+
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startTopH = topPane.getBoundingClientRect().height;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const newH = Math.max(80, startTopH + (e.clientY - startY));
+    topPane.style.flex = 'none';
+    topPane.style.height = newH + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
+
+// ── Log pane controls ─────────────────────────────────────────────────────────
+function setupLogPaneControls() {
+  document.getElementById('clear-logs-btn')?.addEventListener('click', () => {
+    logBuffer = [];
+    renderLogPane();
+  });
+
+  document.getElementById('log-wrap-checkbox')?.addEventListener('change', (e) => {
+    document.getElementById('presets-log-output')?.classList.toggle('log-wrap', e.target.checked);
+  });
+
+  // Pause auto-scroll when user scrolls up.
+  document.getElementById('presets-log-output')?.addEventListener('scroll', () => {
+    const el = document.getElementById('presets-log-output');
+    if (el) logAutoScroll = (el.scrollHeight - el.scrollTop - el.clientHeight) < 20;
+  });
+}
+
+// ── Log streaming ─────────────────────────────────────────────────────────────
+const activeStreams = new Map(); // modelId → AbortController
+let logBuffer = [];             // [{modelId, ts, line}]
+let maxLogLines = 30;           // updated by setupPresets
+let logAutoScroll = true;
+
+function startLogStream(modelId) {
+  stopLogStream(modelId);
+  const ctrl = new AbortController();
+  activeStreams.set(modelId, ctrl);
+
+  // Model IDs may contain slashes (e.g. "author/model"); encode each segment.
+  const path = modelId.split('/').map(encodeURIComponent).join('/');
+
+  (async () => {
+    try {
+      const resp = await fetch(`/api/llamaswap/logs/stream/${path}`, { signal: ctrl.signal });
+      if (!resp.ok) {
+        appendLogLine(modelId, `[stream error: HTTP ${resp.status}]`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let partial = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        partial += decoder.decode(value, { stream: true });
+        const lines = partial.split('\n');
+        partial = lines.pop(); // last item may be incomplete
+        for (const line of lines) {
+          if (line !== '') appendLogLine(modelId, line);
+        }
+      }
+      if (partial) appendLogLine(modelId, partial);
+    } catch (e) {
+      if (e.name !== 'AbortError') appendLogLine(modelId, `[stream closed: ${e.message}]`);
+    }
+  })();
+}
+
+function stopLogStream(modelId) {
+  const ctrl = activeStreams.get(modelId);
+  if (ctrl) { ctrl.abort(); activeStreams.delete(modelId); }
+}
+
+function stopAllLogStreams() {
+  for (const ctrl of activeStreams.values()) ctrl.abort();
+  activeStreams.clear();
+}
+
+function appendLogLine(modelId, line) {
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+  logBuffer.push({ modelId, ts, line });
+  if (logBuffer.length > maxLogLines) logBuffer.splice(0, logBuffer.length - maxLogLines);
+  renderLogPane();
+}
+
+function renderLogPane() {
+  const out = document.getElementById('presets-log-output');
+  if (!out) return;
+  out.textContent = logBuffer.map(e => `[${e.modelId} ${e.ts}]: ${e.line}`).join('\n');
+  if (logAutoScroll) out.scrollTop = out.scrollHeight;
+}
+
+// ── Table rendering ───────────────────────────────────────────────────────────
 function renderPresets(models) {
   const list = document.getElementById('presets-list');
   if (!models || !models.length) {
@@ -74,6 +205,7 @@ function renderPresets(models) {
     <table class="presets-table">
       <thead>
         <tr>
+          <th class="col-watch"></th>
           <th>Model ID</th>
           <th></th>
           <th>State</th>
@@ -86,8 +218,7 @@ function renderPresets(models) {
     if (!showUnlisted && model.unlisted) continue;
     html += modelRow(model);
   }
-
-  html += `</tbody></table>`;
+  html += '</tbody></table>';
 
   if (Object.keys(peerGroups).length > 0) {
     const sorted = Object.entries(peerGroups).sort(([a], [b]) => a.localeCompare(b));
@@ -99,16 +230,15 @@ function renderPresets(models) {
       `;
       for (const m of peers) {
         html += `
-          <tr>
-            <td class="${m.unlisted ? 'text-secondary' : ''}">
-              <span class="model-id">${esc(m.id)}</span>
-            </td>
+          <tr class="${m.unlisted ? 'row--unlisted' : ''}">
+            <td class="col-watch"><input type="checkbox" class="watch-checkbox" data-model-id="${esc(m.id)}"${watchedModels.has(m.id) ? ' checked' : ''}></td>
+            <td><span class="model-id">${esc(m.id)}</span></td>
             <td></td>
-            <td><span class="status status--${m.state}">${esc(m.state)}</span></td>
+            <td><span class="status status--${m.state || 'unknown'}">${esc(m.state || 'unknown')}</span></td>
           </tr>
         `;
       }
-      html += `</tbody></table>`;
+      html += '</tbody></table>';
     }
   }
 
@@ -118,15 +248,19 @@ function renderPresets(models) {
     showUnlisted = e.target.checked;
     fetchPresets();
   });
-
   document.getElementById('unload-all-btn').addEventListener('click', unloadAllModels);
-
   list.querySelectorAll('.load-btn').forEach(btn => {
     btn.addEventListener('click', () => loadModel(btn.dataset.modelId));
   });
-
   list.querySelectorAll('.unload-btn').forEach(btn => {
     btn.addEventListener('click', () => unloadModel(btn.dataset.modelId));
+  });
+  list.querySelectorAll('.watch-checkbox').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const id = e.target.dataset.modelId;
+      if (e.target.checked) { watchedModels.add(id); startLogStream(id); }
+      else { watchedModels.delete(id); stopLogStream(id); }
+    });
   });
 }
 
@@ -141,13 +275,25 @@ function modelRow(model) {
 
   const rowClass = ['row--' + (model.state || 'unknown'), model.unlisted ? 'row--unlisted' : ''].filter(Boolean).join(' ');
 
+  const upstreamBase = llamaServerURL ? llamaServerURL.replace(/\/$/, '') : '';
+  const upstreamHref = upstreamBase ? `${upstreamBase}/upstream/${encodeURIComponent(model.id)}/` : '';
+  const upstreamLink = upstreamHref
+    ? `<a class="upstream-link" href="${upstreamHref}" target="_blank" rel="noopener" title="Open upstream model page">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9"/>
+          <path d="M10 2h4v4"/><line x1="14" y1="2" x2="7" y2="9"/>
+        </svg>
+      </a>`
+    : '';
+
   return `
     <tr class="${rowClass}">
+      <td class="col-watch"><input type="checkbox" class="watch-checkbox" data-model-id="${esc(model.id)}"${watchedModels.has(model.id) ? ' checked' : ''}></td>
       <td>
         <div class="model-info">
-          <span class="model-id">${esc(displayName)}</span>
+          <span class="model-id">${esc(displayName)}${upstreamLink}</span>
           ${model.description ? `<p class="model-desc"><em>${esc(model.description)}</em></p>` : ''}
-          ${model.aliases && model.aliases.length > 0 ? `<p class="model-aliases">Aliases: ${model.aliases.map(esc).join(', ')}</p>` : ''}
+          ${model.aliases?.length ? `<p class="model-aliases">Aliases: ${model.aliases.map(esc).join(', ')}</p>` : ''}
         </div>
       </td>
       <td>${actionBtn}</td>
@@ -156,15 +302,12 @@ function modelRow(model) {
   `;
 }
 
+// ── Model actions ─────────────────────────────────────────────────────────────
 async function loadModel(modelId) {
-  // Disable the button immediately so the UI doesn't feel frozen.
   const btn = document.querySelector(`.load-btn[data-model-id="${modelId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  // Fire-and-forget — the backend returns 202 immediately while llama-swap
-  // loads the model in the background.  Polling will pick up state changes.
   fetch(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' })
     .catch(e => showErr('presets-error', 'Failed to load model: ' + e.message));
-  // Trigger a refresh after a short delay to show the "starting" state quickly.
   setTimeout(fetchPresets, 800);
 }
 

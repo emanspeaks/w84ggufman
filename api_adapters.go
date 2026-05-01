@@ -142,6 +142,10 @@ func (a llamaSwapAdapter) WriteAll(body string) error {
 	return a.l.WriteAll(body)
 }
 
+func (a llamaSwapAdapter) PresetLogLines() int {
+	return a.l.getPresetLogLines()
+}
+
 func toAPIConfig(cfg Config) internalapi.Config {
 	return internalapi.Config{
 		ModelsDir:               cfg.ModelsDir,
