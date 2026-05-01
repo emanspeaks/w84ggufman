@@ -55,10 +55,17 @@ export function stopPresetsPolling() {
 export function setupPresets() {
   setupPresetsResize();
   setupLogPaneControls();
+  updateLogPaneVisibility();
   // Fetch backend settings (e.g. presetLogLines) asynchronously.
   fetch('/api/llamaswap/settings')
     .then(r => r.ok ? r.json() : null)
-    .then(data => { if (data?.presetLogLines > 0) maxLogLines = data.presetLogLines; })
+    .then(data => {
+      if (data?.presetLogLines > 0) {
+        maxLogLines = data.presetLogLines;
+        const inp = document.getElementById('log-lines-input');
+        if (inp) inp.value = maxLogLines;
+      }
+    })
     .catch(() => {});
 }
 
@@ -96,15 +103,70 @@ function setupPresetsResize() {
   });
 }
 
+// ── Log pane visibility ───────────────────────────────────────────────────────
+function updateLogPaneVisibility() {
+  const hidden = watchedModels.size === 0;
+  document.getElementById('presets-bottom-pane')?.classList.toggle('log-pane-hidden', hidden);
+  document.getElementById('presets-resize-handle')?.classList.toggle('log-pane-hidden', hidden);
+}
+
 // ── Log pane controls ─────────────────────────────────────────────────────────
 function setupLogPaneControls() {
   document.getElementById('clear-logs-btn')?.addEventListener('click', () => {
-    logBuffer = [];
+    modelBuffers.clear();
     renderLogPane();
   });
 
-  document.getElementById('log-wrap-checkbox')?.addEventListener('change', (e) => {
-    document.getElementById('presets-log-output')?.classList.toggle('log-wrap', e.target.checked);
+  document.getElementById('log-wrap-btn')?.addEventListener('click', (e) => {
+    const out = document.getElementById('presets-log-output');
+    const btn = e.currentTarget;
+    btn.classList.toggle('active', !!out?.classList.toggle('log-wrap'));
+  });
+
+  document.getElementById('log-fontsize-btn')?.addEventListener('click', () => {
+    const out = document.getElementById('presets-log-output');
+    if (!out) return;
+    out.classList.remove(...LOG_FONT_SIZES.filter(Boolean));
+    logFontSizeIdx = (logFontSizeIdx + 1) % LOG_FONT_SIZES.length;
+    if (LOG_FONT_SIZES[logFontSizeIdx]) out.classList.add(LOG_FONT_SIZES[logFontSizeIdx]);
+  });
+
+  document.getElementById('log-inplace-btn')?.addEventListener('click', (e) => {
+    logInPlace = !logInPlace;
+    e.currentTarget.classList.toggle('active', logInPlace);
+  });
+
+  document.getElementById('log-filter-btn')?.addEventListener('click', (e) => {
+    const row = document.getElementById('log-filter-row');
+    const nowVisible = row?.style.display === 'none';
+    if (row) row.style.display = nowVisible ? '' : 'none';
+    e.currentTarget.classList.toggle('active', nowVisible);
+    if (!nowVisible) {
+      const inp = document.getElementById('log-filter-input');
+      if (inp) { inp.value = ''; inp.classList.remove('filter-invalid'); }
+      renderLogPane();
+    } else {
+      document.getElementById('log-filter-input')?.focus();
+    }
+  });
+
+  document.getElementById('log-filter-input')?.addEventListener('input', () => renderLogPane());
+
+  document.getElementById('log-filter-clear')?.addEventListener('click', () => {
+    const inp = document.getElementById('log-filter-input');
+    if (inp) { inp.value = ''; inp.classList.remove('filter-invalid'); }
+    renderLogPane();
+  });
+
+  document.getElementById('log-lines-input')?.addEventListener('change', (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (v >= 10 && v <= 9999) {
+      maxLogLines = v;
+      for (const buf of modelBuffers.values()) {
+        if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+      }
+      renderLogPane();
+    }
   });
 
   // Pause auto-scroll when user scrolls up.
@@ -115,10 +177,14 @@ function setupLogPaneControls() {
 }
 
 // ── Log streaming ─────────────────────────────────────────────────────────────
-const activeStreams = new Map(); // modelId → AbortController
-let logBuffer = [];             // [{modelId, ts, line}]
-let maxLogLines = 30;           // updated by setupPresets
+const activeStreams = new Map();  // modelId → AbortController
+const modelBuffers = new Map();   // modelId → [{seq, ts, line}]
+let globalSeq = 0;
+let maxLogLines = 200;            // lines stored per model; synced with #log-lines-input
 let logAutoScroll = true;
+let logFontSizeIdx = 0;           // index into LOG_FONT_SIZES
+const LOG_FONT_SIZES = ['', 'log-size-sm', 'log-size-xs', 'log-size-xxs']; // '' = default (largest)
+let logInPlace = true;            // \r lines overwrite last entry (progress bars)
 
 function startLogStream(modelId) {
   stopLogStream(modelId);
@@ -165,18 +231,118 @@ function stopAllLogStreams() {
   activeStreams.clear();
 }
 
-function appendLogLine(modelId, line) {
+function stripNonSgrAnsi(s) {
+  // Remove all CSI sequences whose final byte is NOT 'm' (SGR/colour).
+  // This strips \x1b[K (erase EOL), \x1b[2K (erase line), cursor movement, etc.
+  // Leaves \x1b[...m intact so parseAnsiLine can still colour the text.
+  return s.replace(/\x1b\[[\d;]*[A-Za-ln-z@\[\\\]^_`{|}~]/g, '');
+}
+
+function appendLogLine(modelId, rawLine) {
+  let inPlace = false;
+  let line;
+  if (rawLine.includes('\r')) {
+    // Take the last \r-terminated segment (simulates terminal cursor-home overwrite)
+    const parts = rawLine.split('\r').filter(s => s.length > 0);
+    line = parts.length ? parts[parts.length - 1] : '';
+    inPlace = logInPlace;
+  } else {
+    line = rawLine;
+  }
+  // Strip non-colour ANSI control sequences before storing
+  line = stripNonSgrAnsi(line);
+  if (!line.trim()) return;
   const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
-  logBuffer.push({ modelId, ts, line });
-  if (logBuffer.length > maxLogLines) logBuffer.splice(0, logBuffer.length - maxLogLines);
+  let buf = modelBuffers.get(modelId);
+  if (!buf) { buf = []; modelBuffers.set(modelId, buf); }
+  if (inPlace && buf.length > 0) {
+    // Overwrite the last entry in place — keeps progress bars to one slot
+    const last = buf[buf.length - 1];
+    last.line = line;
+    last.ts = ts;
+  } else {
+    buf.push({ seq: globalSeq++, ts, line });
+    if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
+  }
   renderLogPane();
 }
 
 function renderLogPane() {
   const out = document.getElementById('presets-log-output');
   if (!out) return;
-  out.textContent = logBuffer.map(e => `[${e.modelId} ${e.ts}]: ${e.line}`).join('\n');
+
+  // Merge all watched-model buffers, sorted by insertion sequence.
+  const all = [];
+  for (const [modelId, buf] of modelBuffers) {
+    for (const e of buf) all.push({ modelId, seq: e.seq, ts: e.ts, line: e.line });
+  }
+  all.sort((a, b) => a.seq - b.seq);
+
+  // Apply regex filter.
+  const filterVal = document.getElementById('log-filter-input')?.value || '';
+  let rows = all;
+  if (filterVal) {
+    try {
+      const re = new RegExp(filterVal, 'i');
+      rows = all.filter(e => re.test(e.line));
+      document.getElementById('log-filter-input')?.classList.remove('filter-invalid');
+    } catch {
+      document.getElementById('log-filter-input')?.classList.add('filter-invalid');
+    }
+  }
+
+  // Render with ANSI colour support.
+  out.innerHTML = rows.map(e => parseAnsiLine(`[${e.modelId} ${e.ts}]: ${e.line}`)).join('\n');
   if (logAutoScroll) out.scrollTop = out.scrollHeight;
+}
+
+// ── ANSI escape code parser ───────────────────────────────────────────────────
+function openAnsiSpan(params) {
+  if (!params || params === '0') return '<span>';
+  const codes = params.split(';').map(Number);
+  const cls = [];
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    if (c === 1) cls.push('ansi-bold');
+    else if (c === 2) cls.push('ansi-dim');
+    else if (c === 3) cls.push('ansi-italic');
+    else if (c === 4) cls.push('ansi-underline');
+    else if (c === 5 || c === 6) cls.push('ansi-blink');
+    else if (c === 7) cls.push('ansi-reverse');
+    else if (c >= 30 && c <= 37) cls.push(`ansi-fg-${c - 30}`);
+    else if (c >= 40 && c <= 47) cls.push(`ansi-bg-${c - 40}`);
+    else if (c >= 90 && c <= 97) cls.push(`ansi-fg-${c - 90 + 8}`);
+    else if (c >= 100 && c <= 107) cls.push(`ansi-bg-${c - 100 + 8}`);
+    else if (c === 38 && codes[i + 1] === 5 && i + 2 < codes.length) {
+      cls.push(`ansi-fg-${codes[i + 2]}`); i += 2;
+    } else if (c === 48 && codes[i + 1] === 5 && i + 2 < codes.length) {
+      cls.push(`ansi-bg-${codes[i + 2]}`); i += 2;
+    }
+  }
+  return cls.length ? `<span class="${cls.join(' ')}">` : '<span>';
+}
+
+function parseAnsiLine(line) {
+  let result = '<span>';
+  let i = 0;
+  while (i < line.length) {
+    if (line.charCodeAt(i) === 0x1b && line[i + 1] === '[') {
+      // Scan to end of CSI sequence (final byte: 0x40–0x7e)
+      let j = i + 2;
+      while (j < line.length && !(line.charCodeAt(j) >= 0x40 && line.charCodeAt(j) <= 0x7e)) j++;
+      if (line[j] === 'm') result += '</span>' + openAnsiSpan(line.slice(i + 2, j));
+      // Skip all other CSI sequences (cursor movement, erase, etc.)
+      i = j + 1;
+    } else {
+      const ch = line[i];
+      if (ch === '&') result += '&amp;';
+      else if (ch === '<') result += '&lt;';
+      else if (ch === '>') result += '&gt;';
+      else result += ch;
+      i++;
+    }
+  }
+  return result + '</span>';
 }
 
 // ── Table rendering ───────────────────────────────────────────────────────────
@@ -256,11 +422,21 @@ function renderPresets(models) {
     btn.addEventListener('click', () => unloadModel(btn.dataset.modelId));
   });
   list.querySelectorAll('.watch-checkbox').forEach(cb => {
+    const id = cb.dataset.modelId;
     cb.addEventListener('change', (e) => {
-      const id = e.target.dataset.modelId;
-      if (e.target.checked) { watchedModels.add(id); startLogStream(id); }
-      else { watchedModels.delete(id); stopLogStream(id); }
+      if (e.target.checked) {
+        watchedModels.add(id);
+        startLogStream(id);
+      } else {
+        watchedModels.delete(id);
+        stopLogStream(id);
+        modelBuffers.delete(id);
+        renderLogPane();
+      }
+      updateLogPaneVisibility();
     });
+    // Auto-resume stream if this model was already watched (e.g. after mode switch)
+    if (watchedModels.has(id) && !activeStreams.has(id)) startLogStream(id);
   });
 }
 
