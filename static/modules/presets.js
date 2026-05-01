@@ -270,13 +270,15 @@ function appendLogLine(modelId, rawLine) {
   const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
   let buf = modelBuffers.get(modelId);
   if (!buf) { buf = []; modelBuffers.set(modelId, buf); }
-  if (inPlace && buf.length > 0) {
-    // Overwrite the last entry in place — keeps progress bars to one slot
+  if (inPlace && buf.length > 0 && buf[buf.length - 1].inPlace) {
+    // Only overwrite when the previous entry was itself a progress-bar entry.
+    // This prevents in-place mode from clobbering a normal log line that
+    // immediately preceded the progress bar (e.g. the "EasyCache enabled" line).
     const last = buf[buf.length - 1];
     last.line = line;
     last.ts = ts;
   } else {
-    buf.push({ seq: globalSeq++, ts, line });
+    buf.push({ seq: globalSeq++, ts, line, inPlace });
     if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
   }
   renderLogPane();
