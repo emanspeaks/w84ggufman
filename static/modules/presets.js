@@ -388,6 +388,7 @@ function setupLogPaneControls() {
   const out = document.getElementById('presets-log-output');
   const wrapBtn = document.getElementById('log-wrap-btn');
   const inPlaceBtn = document.getElementById('log-inplace-btn');
+  const pauseBtn = document.getElementById('log-pause-btn');
   const prefs = loadLogPanePrefs();
 
   if (out) {
@@ -435,6 +436,16 @@ function setupLogPaneControls() {
     logInPlace = !logInPlace;
     e.currentTarget.classList.toggle('active', logInPlace);
     saveLogPanePrefs({ inPlace: logInPlace });
+  });
+
+  pauseBtn?.addEventListener('click', () => {
+    logPaused = !logPaused;
+    pauseBtn.classList.toggle('active', logPaused);
+    pauseBtn.textContent = logPaused ? 'resume' : 'pause';
+    if (!logPaused && logRenderDirtyWhilePaused) {
+      logRenderDirtyWhilePaused = false;
+      renderLogPane();
+    }
   });
 
   document.getElementById('log-filter-btn')?.addEventListener('click', (e) => {
@@ -666,10 +677,19 @@ function restartWatchedLogStreams() {
 
 let renderScheduled = false;
 let renderedLogRows = [];
+let logPaused = false;
+let logRenderDirtyWhilePaused = false;
 function scheduleRender() {
   if (!renderScheduled) {
     renderScheduled = true;
-    requestAnimationFrame(() => { renderScheduled = false; renderLogPane(); });
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      if (logPaused) {
+        logRenderDirtyWhilePaused = true;
+        return;
+      }
+      renderLogPane();
+    });
   }
 }
 
@@ -781,9 +801,15 @@ function trimAllModelBuffersToLimit() {
 function renderLogPane() {
   const out = document.getElementById('presets-log-output');
   if (!out) return;
+  if (logPaused) {
+    logRenderDirtyWhilePaused = true;
+    return;
+  }
 
   const wasNearBottom = isNearLogBottom(out);
   const prevScrollTop = out.scrollTop;
+  const shouldStickToBottom = logAutoScroll && wasNearBottom;
+  const anchor = shouldStickToBottom ? null : captureViewportAnchor(out);
 
   // Merge all watched-model buffers, sorted by most recent update time.
   const all = [];
@@ -811,16 +837,41 @@ function renderLogPane() {
 
   // Render with ANSI colour support (incremental patching, not full rewrite).
   const nextRows = rows.map(e => ({
-    key: `${e.modelId}\u0000${e.seq}`,
+    key: `${e.modelId}::${e.seq}`,
     html: parseAnsiLine(`[${e.modelId} ${e.ts}]: ${e.line}`),
   }));
   renderLogRowsIncremental(out, nextRows);
 
-  if (logAutoScroll && wasNearBottom) {
+  if (shouldStickToBottom) {
     out.scrollTop = out.scrollHeight;
+  } else if (anchor) {
+    const idx = nextRows.findIndex(row => row.key === anchor.key);
+    if (idx >= 0) {
+      const rowEl = out.children[idx];
+      if (rowEl) out.scrollTop = rowEl.offsetTop + anchor.deltaFromTop;
+      else out.scrollTop = prevScrollTop;
+    } else {
+      out.scrollTop = prevScrollTop;
+    }
   } else {
     out.scrollTop = prevScrollTop;
   }
+}
+
+function captureViewportAnchor(out) {
+  const top = out.scrollTop;
+  const children = out.children;
+  for (let i = 0; i < children.length; i++) {
+    const el = children[i];
+    const bottom = el.offsetTop + el.offsetHeight;
+    if (bottom > top) {
+      return {
+        key: el.dataset.key || '',
+        deltaFromTop: top - el.offsetTop,
+      };
+    }
+  }
+  return null;
 }
 
 function renderLogRowsIncremental(out, nextRows) {
