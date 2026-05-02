@@ -494,3 +494,9 @@ go build -o w84ggufman .
 ```
 
 Requires Go 1.22+.
+
+## Third-Party Notices
+
+This project includes/adapts terminal color values from the Material Dark theme
+in the iTerm2-Color-Schemes collection. Full attribution and license text are
+provided in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -435,6 +435,8 @@ func (s *Server) HandleLlamaSwapSettings(w http.ResponseWriter, r *http.Request)
 // multi-segment wildcard in the router.
 // The upstream ?no-history query param is forwarded as-is.
 func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request) {
+	const reconnectDelay = 2 * time.Second
+
 	if s.llamaSwap == nil {
 		http.Error(w, "llama-swap not configured", http.StatusServiceUnavailable)
 		return
@@ -452,25 +454,29 @@ func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request
 		path += "?" + q
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
-		strings.TrimRight(s.cfg.LlamaServerURL, "/")+path, nil)
-	if err != nil {
-		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Use a transport with no response timeout so the stream stays open.
 	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
+	openUpstream := func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+			strings.TrimRight(s.cfg.LlamaServerURL, "/")+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			return nil, errors.New("llama-swap /logs/stream returned " + resp.Status + ": " + string(body))
+		}
+		return resp, nil
+	}
+
+	resp, err := openUpstream()
 	if err != nil {
 		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		http.Error(w, "llama-swap /logs/stream returned "+resp.Status+": "+string(body), http.StatusBadGateway)
 		return
 	}
 
@@ -482,17 +488,38 @@ func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request
 	flusher, canFlush := w.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
+				resp.Body.Close()
 				return
 			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
-		if err != nil {
+		if readErr == nil {
+			continue
+		}
+
+		resp.Body.Close()
+		if errors.Is(readErr, context.Canceled) {
 			return
+		}
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(reconnectDelay):
+			}
+
+			nextResp, nextErr := openUpstream()
+			if nextErr != nil {
+				continue
+			}
+			resp = nextResp
+			break
 		}
 	}
 }
