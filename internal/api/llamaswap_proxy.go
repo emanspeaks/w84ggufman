@@ -419,42 +419,6 @@ func (s *Server) proxyLlamaSwapAsync(method, url string) {
 	}()
 }
 
-// proxyLlamaSwap forwards a request to the configured llama-swap server and
-// copies the response back to the client.
-func (s *Server) proxyLlamaSwap(w http.ResponseWriter, r *http.Request, method, path string, body io.Reader) {
-	if s.cfg.LlamaServerURL == "" {
-		http.Error(w, "llama-swap server not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
-
-	url := strings.TrimRight(s.cfg.LlamaServerURL, "/") + path
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		http.Error(w, "failed to build request: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, "llama-swap unreachable: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Copy upstream headers that are relevant.
-	for _, key := range []string{"Content-Type", "Content-Length"} {
-		if v := resp.Header.Get(key); v != "" {
-			w.Header().Set(key, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-}
-
 // HandleLlamaSwapSettings returns settings from the w84 config that the
 // frontend needs at startup (e.g. the log-pane history line count).
 func (s *Server) HandleLlamaSwapSettings(w http.ResponseWriter, r *http.Request) {

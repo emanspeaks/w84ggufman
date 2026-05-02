@@ -11,6 +11,19 @@ export let atopwebURL = '';
 export let llamaServerURL = '';
 export let llamaServerLandingPage = '/';
 export let modelsDir = '';
+let statusConnectionReady = false;
+
+function notifyLlamaServerURLChanged() {
+  window.dispatchEvent(new CustomEvent('w84:llama-server-url-changed'));
+}
+
+function notifyStatusConnection(connected, reason = '') {
+  if (statusConnectionReady === connected && !reason) return;
+  statusConnectionReady = connected;
+  window.dispatchEvent(new CustomEvent('w84:status-connection', {
+    detail: { connected, reason }
+  }));
+}
 
 // Last successfully received GPU / RAM values. Null = never received.
 // Kept across polls so a single probe failure doesn't flash the row away.
@@ -29,8 +42,10 @@ export async function pollStatus() {
     const resp = await fetch('/api/status');
     if (!resp.ok) {
       setHeaderConnectionState(false);
+      notifyStatusConnection(false, `status endpoint returned HTTP ${resp.status}`);
       return;
     }
+    notifyStatusConnection(true);
     const s = await resp.json();
     setHeaderConnectionState(!!s.llamaReachable);
     const el = document.getElementById('status-indicator');
@@ -40,7 +55,11 @@ export async function pollStatus() {
       document.getElementById('open-server-btn').textContent = 'Open ' + s.llamaServiceLabel + '…';
     }
     if (s.llamaServerURL != null) {
-      llamaServerURL = resolveConfigURL(s.llamaServerURL);
+      const resolvedURL = resolveConfigURL(s.llamaServerURL);
+      if (resolvedURL !== llamaServerURL) {
+        llamaServerURL = resolvedURL;
+        notifyLlamaServerURLChanged();
+      }
     }
     if (s.llamaServerLandingPage != null) {
       llamaServerLandingPage = s.llamaServerLandingPage;
@@ -132,6 +151,7 @@ export async function pollStatus() {
     }
   } catch (_) {
     setHeaderConnectionState(false);
+    notifyStatusConnection(false, 'status request failed');
   }
 }
 
