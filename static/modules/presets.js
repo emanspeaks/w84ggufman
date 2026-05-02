@@ -25,10 +25,22 @@ let presetsFetchInFlight = false;
 let presetsFetchAbort = null;
 let modelStatusEventSource = null;
 let fallbackArmTimer = null;
+let presetsUIBound = false;
+
+function makeTimeoutError(timeoutMs) {
+  return new DOMException(
+    `request timed out after ${Math.ceil(timeoutMs / 1000)}s`,
+    'TimeoutError'
+  );
+}
+
+function presetsTimeoutMessage(action) {
+  return `${action} timed out. This page may have gone stale after being open for a long time. Refresh and try again.`;
+}
 
 async function fetchWithTimeout(url, opts = {}, timeoutMs = PRESETS_FETCH_TIMEOUT_MS) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t = setTimeout(() => ctrl.abort(makeTimeoutError(timeoutMs)), timeoutMs);
   try {
     const merged = { ...opts, signal: ctrl.signal };
     return await fetch(url, merged);
@@ -43,7 +55,7 @@ export async function fetchPresets() {
   presetsFetchInFlight = true;
   const ctrl = new AbortController();
   presetsFetchAbort = ctrl;
-  const t = setTimeout(() => ctrl.abort(), PRESETS_FETCH_TIMEOUT_MS);
+  const t = setTimeout(() => ctrl.abort(makeTimeoutError(PRESETS_FETCH_TIMEOUT_MS)), PRESETS_FETCH_TIMEOUT_MS);
   try {
     const resp = await fetch('/api/llamaswap/models', { signal: ctrl.signal });
     if (resp.status === 503) {
@@ -57,7 +69,11 @@ export async function fetchPresets() {
     models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
     renderPresets(models);
   } catch (e) {
-    if (e.name !== 'AbortError') showErr('presets-error', 'Failed to load presets: ' + e.message);
+    if (e.name === 'TimeoutError') {
+      showErr('presets-error', presetsTimeoutMessage('Refreshing model status'));
+    } else if (e.name !== 'AbortError') {
+      showErr('presets-error', 'Failed to load presets: ' + e.message);
+    }
   } finally {
     clearTimeout(t);
     if (presetsFetchAbort === ctrl) presetsFetchAbort = null;
@@ -160,9 +176,19 @@ function stopModelStatusStream() {
 
 // ── One-time setup (called from app.js on DOMContentLoaded) ──────────────────
 export function setupPresets() {
+  if (presetsUIBound) return;
+  presetsUIBound = true;
+
   setupPresetsResize();
   setupLogPaneControls();
   updateLogPaneVisibility();
+  document.getElementById('show-unlisted-checkbox')?.addEventListener('change', (e) => {
+    showUnlisted = e.target.checked;
+    fetchPresets();
+  });
+  document.getElementById('watch-all-btn')?.addEventListener('click', () => setWatchAll(true));
+  document.getElementById('watch-none-btn')?.addEventListener('click', () => setWatchAll(false));
+  document.getElementById('unload-all-btn')?.addEventListener('click', unloadAllModels);
   // Fetch backend settings (e.g. presetLogLines) asynchronously.
   fetch('/api/llamaswap/settings')
     .then(r => r.ok ? r.json() : null)
@@ -574,14 +600,6 @@ function renderPresets(models) {
   }
 
   list.innerHTML = html;
-
-  document.getElementById('show-unlisted-checkbox').addEventListener('change', (e) => {
-    showUnlisted = e.target.checked;
-    fetchPresets();
-  });
-  document.getElementById('watch-all-btn').addEventListener('click', () => setWatchAll(true));
-  document.getElementById('watch-none-btn').addEventListener('click', () => setWatchAll(false));
-  document.getElementById('unload-all-btn').addEventListener('click', unloadAllModels);
   list.querySelectorAll('.load-btn').forEach(btn => {
     btn.addEventListener('click', () => loadModel(btn.dataset.modelId));
   });
@@ -650,7 +668,9 @@ async function loadModel(modelId) {
   const btn = document.querySelector(`.load-btn[data-model-id="${modelId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   fetchWithTimeout(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' }, 15000)
-    .catch(e => showErr('presets-error', 'Failed to load model: ' + e.message));
+    .catch(e => showErr('presets-error', e.name === 'TimeoutError'
+      ? presetsTimeoutMessage('Loading model')
+      : 'Failed to load model: ' + e.message));
   setTimeout(fetchPresets, 800);
 }
 
@@ -660,7 +680,9 @@ async function unloadModel(modelId) {
     if (!resp.ok) throw new Error(await resp.text());
     fetchPresets();
   } catch (e) {
-    showErr('presets-error', 'Failed to unload model: ' + e.message);
+    showErr('presets-error', e.name === 'TimeoutError'
+      ? presetsTimeoutMessage('Unloading model')
+      : 'Failed to unload model: ' + e.message);
   }
 }
 
@@ -670,6 +692,8 @@ async function unloadAllModels() {
     if (!resp.ok) throw new Error(await resp.text());
     fetchPresets();
   } catch (e) {
-    showErr('presets-error', 'Failed to unload all models: ' + e.message);
+    showErr('presets-error', e.name === 'TimeoutError'
+      ? presetsTimeoutMessage('Unloading all models')
+      : 'Failed to unload all models: ' + e.message);
   }
 }
