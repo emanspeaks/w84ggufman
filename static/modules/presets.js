@@ -346,9 +346,7 @@ function applyScrollbackLimit() {
   const v = parseInt(inp?.value, 10);
   if (v >= 10 && v <= 9999) {
     maxLogLines = v;
-    for (const buf of modelBuffers.values()) {
-      if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
-    }
+    trimAllModelBuffersToLimit();
     renderLogPane();
   }
 }
@@ -387,6 +385,24 @@ function updateLogConnectionState(forcedState = '') {
 
 // ── Log pane controls ─────────────────────────────────────────────────────────
 function setupLogPaneControls() {
+  const out = document.getElementById('presets-log-output');
+  const wrapBtn = document.getElementById('log-wrap-btn');
+  const inPlaceBtn = document.getElementById('log-inplace-btn');
+  const prefs = loadLogPanePrefs();
+
+  if (out) {
+    out.classList.remove(...LOG_FONT_SIZES.filter(Boolean));
+    const idx = Number.isInteger(prefs.fontSizeIdx) ? prefs.fontSizeIdx : 0;
+    logFontSizeIdx = Math.max(0, Math.min(LOG_FONT_SIZES.length - 1, idx));
+    if (LOG_FONT_SIZES[logFontSizeIdx]) out.classList.add(LOG_FONT_SIZES[logFontSizeIdx]);
+
+    const wrapEnabled = !!prefs.wrap;
+    out.classList.toggle('log-wrap', wrapEnabled);
+    wrapBtn?.classList.toggle('active', wrapEnabled);
+  }
+  if (typeof prefs.inPlace === 'boolean') logInPlace = prefs.inPlace;
+  inPlaceBtn?.classList.toggle('active', logInPlace);
+
   document.getElementById('log-lines-apply-btn')?.addEventListener('click', () => applyScrollbackLimit());
   document.getElementById('log-lines-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') applyScrollbackLimit();
@@ -394,13 +410,16 @@ function setupLogPaneControls() {
 
   document.getElementById('clear-logs-btn')?.addEventListener('click', () => {
     modelBuffers.clear();
+    renderedLogRows = [];
     renderLogPane();
   });
 
   document.getElementById('log-wrap-btn')?.addEventListener('click', (e) => {
     const out = document.getElementById('presets-log-output');
     const btn = e.currentTarget;
-    btn.classList.toggle('active', !!out?.classList.toggle('log-wrap'));
+    const wrapEnabled = !!out?.classList.toggle('log-wrap');
+    btn.classList.toggle('active', wrapEnabled);
+    saveLogPanePrefs({ wrap: wrapEnabled });
   });
 
   document.getElementById('log-fontsize-btn')?.addEventListener('click', () => {
@@ -409,11 +428,13 @@ function setupLogPaneControls() {
     out.classList.remove(...LOG_FONT_SIZES.filter(Boolean));
     logFontSizeIdx = (logFontSizeIdx + 1) % LOG_FONT_SIZES.length;
     if (LOG_FONT_SIZES[logFontSizeIdx]) out.classList.add(LOG_FONT_SIZES[logFontSizeIdx]);
+    saveLogPanePrefs({ fontSizeIdx: logFontSizeIdx });
   });
 
   document.getElementById('log-inplace-btn')?.addEventListener('click', (e) => {
     logInPlace = !logInPlace;
     e.currentTarget.classList.toggle('active', logInPlace);
+    saveLogPanePrefs({ inPlace: logInPlace });
   });
 
   document.getElementById('log-filter-btn')?.addEventListener('click', (e) => {
@@ -441,7 +462,7 @@ function setupLogPaneControls() {
   // Pause auto-scroll when user scrolls up.
   document.getElementById('presets-log-output')?.addEventListener('scroll', () => {
     const el = document.getElementById('presets-log-output');
-    if (el) logAutoScroll = (el.scrollHeight - el.scrollTop - el.clientHeight) < 20;
+    if (el) logAutoScroll = isNearLogBottom(el);
   });
 }
 
@@ -449,13 +470,38 @@ function setupLogPaneControls() {
 const activeStreams = new Map();  // modelId → { ctrl, retryTimer, retryAttempt, token }
 const modelBuffers = new Map();   // modelId → [{seq, ts, line}]
 let globalSeq = 0;
-let maxLogLines = 200;            // lines stored per model; synced with #log-lines-input
+let maxLogLines = 200;            // max lines stored across all watched logs; synced with #log-lines-input
 let logAutoScroll = true;
 let logFontSizeIdx = 0;           // index into LOG_FONT_SIZES
 const LOG_FONT_SIZES = ['', 'log-size-sm', 'log-size-xs', 'log-size-xxs']; // '' = default (largest)
 let logInPlace = true;            // \r lines overwrite last entry (progress bars)
 const LOG_RETRY_MIN_DELAY_MS = 1000;
 const LOG_RETRY_MAX_DELAY_MS = 30000;
+const LOG_PREFS_STORAGE_KEY = 'w84.presets.logPrefs';
+
+function isNearLogBottom(el) {
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) < 20;
+}
+
+function loadLogPanePrefs() {
+  try {
+    const raw = localStorage.getItem(LOG_PREFS_STORAGE_KEY);
+    if (!raw) return {};
+    const prefs = JSON.parse(raw);
+    return (prefs && typeof prefs === 'object') ? prefs : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveLogPanePrefs(prefsPatch) {
+  const merged = { ...loadLogPanePrefs(), ...prefsPatch };
+  try {
+    localStorage.setItem(LOG_PREFS_STORAGE_KEY, JSON.stringify(merged));
+  } catch {
+    // Ignore storage issues and keep runtime behavior.
+  }
+}
 
 function encodeModelPath(modelId) {
   return String(modelId || '').split('/').map(encodeURIComponent).join('/');
@@ -619,6 +665,7 @@ function restartWatchedLogStreams() {
 // When logInPlace is off, \r is treated the same as \n.
 
 let renderScheduled = false;
+let renderedLogRows = [];
 function scheduleRender() {
   if (!renderScheduled) {
     renderScheduled = true;
@@ -670,7 +717,6 @@ function feedChunk(modelId, rawChunk) {
       stamp(live);
       live.finalized = true;
       if (!live.line.trim()) buf.pop(); // discard empty lines
-      if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
     } else if (part === '\r') {
       if (logInPlace) {
         // Carriage return: reset the live line's content but keep its slot.
@@ -683,7 +729,6 @@ function feedChunk(modelId, rawChunk) {
         stamp(live);
         live.finalized = true;
         if (!live.line.trim()) buf.pop();
-        if (buf.length > maxLogLines) buf.splice(0, buf.length - maxLogLines);
       }
     } else if (part) {
       const live = ensureLiveLine(buf);
@@ -691,12 +736,54 @@ function feedChunk(modelId, rawChunk) {
       stamp(live);
     }
   }
+  trimAllModelBuffersToLimit();
   scheduleRender();
+}
+
+function trimAllModelBuffersToLimit() {
+  let total = 0;
+  const entries = [];
+  for (const [modelId, buf] of modelBuffers) {
+    total += buf.length;
+    for (let i = 0; i < buf.length; i++) {
+      const e = buf[i];
+      entries.push({ modelId, index: i, tsMs: e.tsMs || 0, seq: e.seq });
+    }
+  }
+  if (total <= maxLogLines) return;
+
+  entries.sort((a, b) => (a.tsMs - b.tsMs) || (a.seq - b.seq));
+  const toDrop = total - maxLogLines;
+  const dropByModel = new Map();
+
+  for (let i = 0; i < toDrop; i++) {
+    const victim = entries[i];
+    let set = dropByModel.get(victim.modelId);
+    if (!set) {
+      set = new Set();
+      dropByModel.set(victim.modelId, set);
+    }
+    set.add(victim.index);
+  }
+
+  for (const [modelId, dropIndexes] of dropByModel) {
+    const buf = modelBuffers.get(modelId);
+    if (!buf) continue;
+    const next = [];
+    for (let i = 0; i < buf.length; i++) {
+      if (!dropIndexes.has(i)) next.push(buf[i]);
+    }
+    if (next.length > 0) modelBuffers.set(modelId, next);
+    else modelBuffers.delete(modelId);
+  }
 }
 
 function renderLogPane() {
   const out = document.getElementById('presets-log-output');
   if (!out) return;
+
+  const wasNearBottom = isNearLogBottom(out);
+  const prevScrollTop = out.scrollTop;
 
   // Merge all watched-model buffers, sorted by most recent update time.
   const all = [];
@@ -718,9 +805,71 @@ function renderLogPane() {
     }
   }
 
-  // Render with ANSI colour support.
-  out.innerHTML = rows.map(e => parseAnsiLine(`[${e.modelId} ${e.ts}]: ${e.line}`)).join('\n');
-  if (logAutoScroll) out.scrollTop = out.scrollHeight;
+  if (rows.length > maxLogLines) {
+    rows = rows.slice(rows.length - maxLogLines);
+  }
+
+  // Render with ANSI colour support (incremental patching, not full rewrite).
+  const nextRows = rows.map(e => ({
+    key: `${e.modelId}\u0000${e.seq}`,
+    html: parseAnsiLine(`[${e.modelId} ${e.ts}]: ${e.line}`),
+  }));
+  renderLogRowsIncremental(out, nextRows);
+
+  if (logAutoScroll && wasNearBottom) {
+    out.scrollTop = out.scrollHeight;
+  } else {
+    out.scrollTop = prevScrollTop;
+  }
+}
+
+function renderLogRowsIncremental(out, nextRows) {
+  const prevRows = renderedLogRows;
+  let start = 0;
+  const prevLen = prevRows.length;
+  const nextLen = nextRows.length;
+
+  while (
+    start < prevLen &&
+    start < nextLen &&
+    prevRows[start].key === nextRows[start].key &&
+    prevRows[start].html === nextRows[start].html
+  ) {
+    start += 1;
+  }
+
+  let prevEnd = prevLen - 1;
+  let nextEnd = nextLen - 1;
+  while (
+    prevEnd >= start &&
+    nextEnd >= start &&
+    prevRows[prevEnd].key === nextRows[nextEnd].key &&
+    prevRows[prevEnd].html === nextRows[nextEnd].html
+  ) {
+    prevEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  const removeCount = Math.max(0, prevEnd - start + 1);
+  for (let i = 0; i < removeCount; i++) {
+    const child = out.children[start];
+    if (child) out.removeChild(child);
+  }
+
+  if (nextEnd >= start) {
+    const frag = document.createDocumentFragment();
+    for (let i = start; i <= nextEnd; i++) {
+      const row = document.createElement('div');
+      row.className = 'log-row';
+      row.dataset.key = nextRows[i].key;
+      row.innerHTML = nextRows[i].html;
+      frag.appendChild(row);
+    }
+    const anchor = out.children[start] || null;
+    out.insertBefore(frag, anchor);
+  }
+
+  renderedLogRows = nextRows;
 }
 
 // ── ANSI escape code parser ───────────────────────────────────────────────────
@@ -750,6 +899,8 @@ function openAnsiSpan(params) {
 }
 
 function parseAnsiLine(line) {
+  if (!line.includes('\x1b[')) return escapeHtml(line);
+
   let result = '<span>';
   let i = 0;
   while (i < line.length) {
@@ -772,6 +923,13 @@ function parseAnsiLine(line) {
   return result + '</span>';
 }
 
+function escapeHtml(s) {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
 // ── Table rendering ───────────────────────────────────────────────────────────
 function renderPresets(models) {
   const list = document.getElementById('presets-list');
@@ -781,6 +939,15 @@ function renderPresets(models) {
   }
 
   applyDefaultWatchSelections(models);
+
+  // Prevent unbounded growth when presets are removed/renamed over time.
+  const modelIds = new Set(models.map(m => m.id));
+  for (const id of [...watchedModels]) {
+    if (!modelIds.has(id)) watchedModels.delete(id);
+  }
+  for (const id of [...explicitlyUnwatchedModels]) {
+    if (!modelIds.has(id)) explicitlyUnwatchedModels.delete(id);
+  }
 
   const regularModels = models.filter(m => !m.peerID);
   const peerGroups = {};
