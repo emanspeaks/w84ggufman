@@ -86,7 +86,6 @@
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 
 .log-conn-state.state-connected {
