@@ -264,7 +264,7 @@ html.light .editor-close:hover { background: #e2e8f0; color: #1e293b; }
 /* ── Template editor sections ──────────────────────────────────────────────── */
 .tpl-section { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
 .tpl-section + .tpl-section { padding-top: 0.75rem; border-top: 1px solid #334155; }
-.tpl-section-title { font-size: 0.8rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+.tpl-section-title { font-size: 0.8rem; font-weight: 600; color: #94a3b8; letter-spacing: 0.04em; }
 .tpl-textarea {
   width: 100%; height: 160px; min-height: 80px;
   background: #0f172a; border: 1px solid #334155; border-radius: 6px;
@@ -376,7 +376,7 @@ html.light .quant-tile.present:has(.quant-cb:not(:checked)) .quant-tile-size { c
 }
 .subsection-label {
   font-size: 0.72rem; font-weight: 600; color: #475569;
-  text-transform: uppercase; letter-spacing: 0.04em;
+  letter-spacing: 0.04em;
 }
 .select-btns { display: flex; gap: 6px; }
 .btn-link {
@@ -433,7 +433,7 @@ html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
   max-height: 180px; overflow-y: auto;
 }
 #queue-panel .queue-header {
-  color: #475569; text-transform: uppercase;
+  color: #475569;
   letter-spacing: 0.05em; font-size: 0.62rem;
   margin-bottom: 3px;
 }
@@ -455,7 +455,6 @@ html.light .badge-local    { background: #ede9fe; color: #5b21b6; }
 #queue-panel .queue-item-state {
   font-size: 0.58rem;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
   border: 1px solid transparent;
   border-radius: 9px;
   padding: 0 5px;
@@ -529,7 +528,7 @@ html.light #queue-panel .queue-item-detail {
 #status-bar-label {
   color: #334155; white-space: nowrap;
   border-right: 1px solid #1e293b; padding-right: 0.75rem;
-  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+  font-size: 0.68rem; letter-spacing: 0.05em;
 }
 #status-bar-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #status-bar.active #status-bar-text { color: #e2e8f0; }

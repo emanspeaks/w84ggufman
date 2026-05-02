@@ -367,7 +367,8 @@ func (s *Server) HandleLlamaSwapLoadModel(w http.ResponseWriter, r *http.Request
 	// That can take many seconds while the model loads.  Fire it in a goroutine
 	// so we return 202 to the browser immediately and let polling track state.
 	url := strings.TrimRight(s.cfg.LlamaServerURL, "/") + "/upstream/" + id + "/"
-	s.proxyLlamaSwapAsync(http.MethodGet, url)
+	// Loading a model can take several minutes for large files; use a long timeout.
+	s.proxyLlamaSwapAsync(http.MethodGet, url, 10*time.Minute)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -379,7 +380,7 @@ func (s *Server) HandleLlamaSwapUnloadAll(w http.ResponseWriter, r *http.Request
 	}
 	// Unload can also take several seconds while llama-swap drains the model.
 	// Return 202 immediately and let status updates reflect completion.
-	s.proxyLlamaSwapAsync(http.MethodPost, strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/api/models/unload")
+	s.proxyLlamaSwapAsync(http.MethodPost, strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/api/models/unload", 30*time.Second)
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -398,19 +399,19 @@ func (s *Server) HandleLlamaSwapUnloadModel(w http.ResponseWriter, r *http.Reque
 	}
 	// Unload can also take several seconds while llama-swap drains the model.
 	// Return 202 immediately and let status updates reflect completion.
-	s.proxyLlamaSwapAsync(http.MethodPost, strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/api/models/unload/"+id)
+	s.proxyLlamaSwapAsync(http.MethodPost, strings.TrimRight(s.cfg.LlamaServerURL, "/")+"/api/models/unload/"+id, 30*time.Second)
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) proxyLlamaSwapAsync(method, url string) {
+func (s *Server) proxyLlamaSwapAsync(method, url string, timeout time.Duration) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, method, url, nil)
 		if err != nil {
 			return
 		}
-		client := &http.Client{Timeout: 25 * time.Second}
+		client := &http.Client{Timeout: 0} // context controls the deadline
 		resp, err := client.Do(req)
 		if err == nil {
 			io.Copy(io.Discard, resp.Body)
@@ -446,6 +447,17 @@ func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Use a transport with ResponseHeaderTimeout so a non-responsive llama-swap
+	// endpoint does not block the browser connection indefinitely.  Once the
+	// upstream sends its response headers, the stream can remain open forever
+	// (Timeout: 0); only the initial header wait is bounded.
+	client := &http.Client{
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 10 * time.Second,
+		},
+		Timeout: 0,
+	}
+
 	path := "/logs/stream"
 	if id := r.PathValue("id"); id != "" {
 		path += "/" + id
@@ -454,8 +466,6 @@ func (s *Server) HandleLlamaSwapLogStream(w http.ResponseWriter, r *http.Request
 		path += "?" + q
 	}
 
-	// Use a transport with no response timeout so the stream stays open.
-	client := &http.Client{Timeout: 0}
 	openUpstream := func() (*http.Response, error) {
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
 			strings.TrimRight(s.cfg.LlamaServerURL, "/")+path, nil)

@@ -75,6 +75,7 @@ function renderPresetsIfReady() {
     renderPresetsLoading();
     return;
   }
+  syncWatchedLogStreamsToModelStates();
   const models = [...latestModels];
   models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
   renderPresets(models);
@@ -387,6 +388,11 @@ function updateLogConnectionState(forcedState = '') {
     return;
   }
 
+  let waiting = 0;
+  for (const modelId of watchedModels) {
+    if (!isModelReadyForLogs(modelId)) waiting += 1;
+  }
+
   let connected = 0;
   let connecting = 0;
   let reconnecting = 0;
@@ -410,6 +416,10 @@ function updateLogConnectionState(forcedState = '') {
   }
   if (error > 0) {
     setState('error', `error ${error}`, `Streams with errors: ${error}/${watchedModels.size}`);
+    return;
+  }
+  if (waiting === watchedModels.size) {
+    setState('idle', `waiting ${waiting}`, `Watched models are not running: ${waiting}/${watchedModels.size}`);
     return;
   }
   setState('connecting', `connecting ${connecting || watchedModels.size}`, `Connecting streams: ${connecting || watchedModels.size}/${watchedModels.size}`);
@@ -487,6 +497,33 @@ let logInPlace = true;            // \r lines overwrite last entry (progress bar
 const LOG_RETRY_MIN_DELAY_MS = 1000;
 const LOG_RETRY_MAX_DELAY_MS = 30000;
 
+function encodeModelPath(modelId) {
+  return String(modelId || '').split('/').map(encodeURIComponent).join('/');
+}
+
+function getModelState(modelId) {
+  const m = latestModels.find(model => model.id === modelId);
+  return m?.state || '';
+}
+
+function isModelReadyForLogs(modelId) {
+  return getModelState(modelId) === 'ready';
+}
+
+function syncWatchedLogStreamsToModelStates() {
+  for (const modelId of [...activeStreams.keys()]) {
+    if (!watchedModels.has(modelId) || !isModelReadyForLogs(modelId)) {
+      stopLogStream(modelId);
+    }
+  }
+  for (const modelId of watchedModels) {
+    if (isModelReadyForLogs(modelId) && !activeStreams.has(modelId)) {
+      startLogStream(modelId);
+    }
+  }
+  updateLogConnectionState();
+}
+
 function nextLogRetryDelayMs(attempt) {
   const exp = Math.min(LOG_RETRY_MAX_DELAY_MS, LOG_RETRY_MIN_DELAY_MS * (2 ** Math.min(attempt, 5)));
   const jitter = Math.floor(Math.random() * 400);
@@ -495,6 +532,11 @@ function nextLogRetryDelayMs(attempt) {
 
 function scheduleLogReconnect(modelId, stream) {
   if (!stream || stream.retryTimer || !watchedModels.has(modelId)) return;
+  if (!isModelReadyForLogs(modelId)) {
+    stream.state = 'idle';
+    updateLogConnectionState();
+    return;
+  }
   stream.state = 'reconnecting';
   updateLogConnectionState();
   const delay = nextLogRetryDelayMs(stream.retryAttempt);
@@ -507,7 +549,11 @@ function scheduleLogReconnect(modelId, stream) {
 }
 
 function connectLogStream(modelId, stream) {
-  if (!stream || !watchedModels.has(modelId) || activeStreams.get(modelId) !== stream) return;
+  if (!stream || !watchedModels.has(modelId) || activeStreams.get(modelId) !== stream || !isModelReadyForLogs(modelId)) {
+    if (stream) stream.state = 'idle';
+    updateLogConnectionState();
+    return;
+  }
 
   stream.state = stream.retryAttempt > 0 ? 'reconnecting' : 'connecting';
   updateLogConnectionState();
@@ -522,7 +568,7 @@ function connectLogStream(modelId, stream) {
   const token = ++stream.token;
 
   // Model IDs may contain slashes (e.g. "author/model"); encode each segment.
-  const path = modelId.split('/').map(encodeURIComponent).join('/');
+  const path = encodeModelPath(modelId);
 
   (async () => {
     try {
@@ -601,7 +647,7 @@ function stopAllLogStreams() {
 }
 
 function restartWatchedLogStreams() {
-  for (const modelId of watchedModels) startLogStream(modelId);
+  syncWatchedLogStreamsToModelStates();
 }
 
 // ── Real-time chunk-based log feeding ────────────────────────────────────────
@@ -848,7 +894,7 @@ function renderPresets(models) {
     cb.addEventListener('change', (e) => {
       if (e.target.checked) {
         watchedModels.add(id);
-        startLogStream(id);
+        syncWatchedLogStreamsToModelStates();
       } else {
         watchedModels.delete(id);
         stopLogStream(id);
@@ -856,10 +902,11 @@ function renderPresets(models) {
         renderLogPane();
       }
       updateLogPaneVisibility();
+      updateLogConnectionState();
     });
-    // Auto-resume stream if this model was already watched (e.g. after mode switch)
-    if (watchedModels.has(id) && !activeStreams.has(id)) startLogStream(id);
   });
+  // Auto-resume streams for already watched models (e.g. after mode switch).
+  syncWatchedLogStreamsToModelStates();
 }
 
 function modelRow(model) {
@@ -874,7 +921,7 @@ function modelRow(model) {
   const rowClass = ['row--' + (model.state || 'unknown'), model.unlisted ? 'row--unlisted' : ''].filter(Boolean).join(' ');
 
   const upstreamBase = llamaServerURL ? llamaServerURL.replace(/\/$/, '') : '';
-  const upstreamHref = upstreamBase ? `${upstreamBase}/upstream/${encodeURIComponent(model.id)}/` : '';
+  const upstreamHref = upstreamBase ? `${upstreamBase}/upstream/${encodeModelPath(model.id)}/` : '';
   const upstreamLink = upstreamHref
     ? `<a class="upstream-link" href="${upstreamHref}" target="_blank" rel="noopener" title="Open upstream model page">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -904,16 +951,23 @@ function modelRow(model) {
 async function loadModel(modelId) {
   const btn = document.querySelector(`.load-btn[data-model-id="${modelId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  fetchWithTimeout(`/api/llamaswap/models/load/${encodeURIComponent(modelId)}`, { method: 'POST' }, 15000)
-    .catch(e => showErr('presets-error', e.name === 'TimeoutError'
+  try {
+    const path = encodeModelPath(modelId);
+    const resp = await fetchWithTimeout(`/api/llamaswap/models/load/${path}`, { method: 'POST' }, 20000);
+    if (!resp.ok) throw new Error(await resp.text());
+    fetchPresets();
+    setTimeout(fetchPresets, 1200);
+  } catch (e) {
+    showErr('presets-error', e.name === 'TimeoutError'
       ? presetsTimeoutMessage('Loading model')
-      : 'Failed to load model: ' + e.message));
-  setTimeout(fetchPresets, 800);
+      : 'Failed to load model: ' + e.message);
+  }
 }
 
 async function unloadModel(modelId) {
   try {
-    const resp = await fetchWithTimeout(`/api/llamaswap/models/unload/${encodeURIComponent(modelId)}`, { method: 'POST' }, 15000);
+    const path = encodeModelPath(modelId);
+    const resp = await fetchWithTimeout(`/api/llamaswap/models/unload/${path}`, { method: 'POST' }, 20000);
     if (!resp.ok) throw new Error(await resp.text());
     fetchPresets();
   } catch (e) {
