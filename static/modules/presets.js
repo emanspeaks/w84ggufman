@@ -30,6 +30,10 @@ let presetsFetchedOnce = false;
 let lastDetailsHydrateAt = 0;
 const DETAILS_HYDRATE_COOLDOWN_MS = 30000;
 const modelDetailsCache = new Map();
+let latestModels = [];
+let modelsDataReady = false;
+let statusDataReady = false;
+let statusWaitReason = '';
 
 function makeTimeoutError(timeoutMs) {
   return new DOMException(
@@ -40,6 +44,40 @@ function makeTimeoutError(timeoutMs) {
 
 function presetsTimeoutMessage(action) {
   return `${action} timed out. This page may have gone stale after being open for a long time. Refresh and try again.`;
+}
+
+function renderPresetsLoading() {
+  const list = document.getElementById('presets-list');
+  if (!list) return;
+
+  const waiting = [];
+  if (!statusDataReady) waiting.push('status data');
+  if (!modelsDataReady) waiting.push('models data');
+
+  const waitText = waiting.length
+    ? `Waiting on ${waiting.join(' and ')}...`
+    : 'Loading presets...';
+  const reasonText = (!statusDataReady && statusWaitReason)
+    ? `<div class="msg-subtle">Status detail: ${esc(statusWaitReason)}</div>`
+    : '';
+
+  list.innerHTML = `
+    <div class="presets-loading-state" role="status" aria-live="polite">
+      <span class="presets-loading-spinner" aria-hidden="true"></span>
+      <p class="msg-empty">${waitText}</p>
+      ${reasonText}
+    </div>
+  `;
+}
+
+function renderPresetsIfReady() {
+  if (!statusDataReady || !modelsDataReady) {
+    renderPresetsLoading();
+    return;
+  }
+  const models = [...latestModels];
+  models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
+  renderPresets(models);
 }
 
 function mergeModelDetails(models) {
@@ -97,8 +135,9 @@ export async function fetchPresets() {
     }
     if (!resp.ok) throw new Error(await resp.text());
     const models = mergeModelDetails(await resp.json());
-    models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
-    renderPresets(models);
+    latestModels = models;
+    modelsDataReady = true;
+    renderPresetsIfReady();
     presetsFetchedOnce = true;
   } catch (e) {
     if (e.name === 'TimeoutError') {
@@ -171,9 +210,10 @@ function handleModelStatusData(data) {
   }
   if (!Array.isArray(models)) return;
   models = mergeModelDetails(models);
+  latestModels = models;
+  modelsDataReady = true;
   clearErr('presets-error');
-  models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
-  renderPresets(models);
+  renderPresetsIfReady();
   if (shouldHydrateModelDetails(models) && Date.now() - lastDetailsHydrateAt >= DETAILS_HYDRATE_COOLDOWN_MS) {
     lastDetailsHydrateAt = Date.now();
     fetchPresets();
@@ -220,6 +260,18 @@ export function setupPresets() {
   setupPresetsResize();
   setupLogPaneControls();
   updateLogPaneVisibility();
+  renderPresetsLoading();
+
+  window.addEventListener('w84:status-connection', (ev) => {
+    const detail = ev?.detail || {};
+    statusDataReady = !!detail.connected;
+    statusWaitReason = detail.connected ? '' : String(detail.reason || 'status not connected');
+    renderPresetsIfReady();
+  });
+
+  window.addEventListener('w84:llama-server-url-changed', () => {
+    renderPresetsIfReady();
+  });
   // Fetch backend settings (e.g. presetLogLines) asynchronously.
   fetch('/api/llamaswap/settings')
     .then(r => r.ok ? r.json() : null)
