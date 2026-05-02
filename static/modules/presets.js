@@ -369,60 +369,7 @@ function updateLogPaneVisibility() {
 }
 
 function updateLogConnectionState(forcedState = '') {
-  const el = document.getElementById('log-conn-state');
-  if (!el) return;
-
-  const setState = (state, text, title) => {
-    el.className = `log-conn-state state-${state}`;
-    el.textContent = text;
-    el.title = title || 'Watched log stream connection state';
-  };
-
-  if (forcedState === 'offline') {
-    setState('offline', 'offline', 'Browser reports network offline');
-    return;
-  }
-
-  if (watchedModels.size === 0) {
-    setState('idle', 'idle', 'No watched model logs');
-    return;
-  }
-
-  let waiting = 0;
-  for (const modelId of watchedModels) {
-    if (!isModelReadyForLogs(modelId)) waiting += 1;
-  }
-
-  let connected = 0;
-  let connecting = 0;
-  let reconnecting = 0;
-  let error = 0;
-
-  for (const stream of activeStreams.values()) {
-    const state = stream.state || 'connecting';
-    if (state === 'connected') connected += 1;
-    else if (state === 'connecting') connecting += 1;
-    else if (state === 'reconnecting') reconnecting += 1;
-    else if (state === 'error') error += 1;
-  }
-
-  if (connected > 0 && connecting === 0 && reconnecting === 0 && error === 0 && connected === watchedModels.size) {
-    setState('connected', 'connected', `Connected: ${connected}/${watchedModels.size}`);
-    return;
-  }
-  if (reconnecting > 0) {
-    setState('reconnecting', `reconnecting ${reconnecting}`, `Reconnecting streams: ${reconnecting}/${watchedModels.size}`);
-    return;
-  }
-  if (error > 0) {
-    setState('error', `error ${error}`, `Streams with errors: ${error}/${watchedModels.size}`);
-    return;
-  }
-  if (waiting === watchedModels.size) {
-    setState('idle', `waiting ${waiting}`, `Watched models are not running: ${waiting}/${watchedModels.size}`);
-    return;
-  }
-  setState('connecting', `connecting ${connecting || watchedModels.size}`, `Connecting streams: ${connecting || watchedModels.size}/${watchedModels.size}`);
+  void forcedState;
 }
 
 // ── Log pane controls ─────────────────────────────────────────────────────────
@@ -507,7 +454,9 @@ function getModelState(modelId) {
 }
 
 function isModelReadyForLogs(modelId) {
-  return getModelState(modelId) === 'ready';
+  const state = getModelState(modelId);
+  // Connect as soon as a watched model enters loading, even if load started externally.
+  return state === 'ready' || state === 'starting' || state === 'loading';
 }
 
 function syncWatchedLogStreamsToModelStates() {
