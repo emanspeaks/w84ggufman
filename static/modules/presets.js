@@ -26,6 +26,10 @@ let presetsFetchAbort = null;
 let modelStatusEventSource = null;
 let fallbackArmTimer = null;
 let presetsUIBound = false;
+let presetsFetchedOnce = false;
+let lastDetailsHydrateAt = 0;
+const DETAILS_HYDRATE_COOLDOWN_MS = 30000;
+const modelDetailsCache = new Map();
 
 function makeTimeoutError(timeoutMs) {
   return new DOMException(
@@ -36,6 +40,33 @@ function makeTimeoutError(timeoutMs) {
 
 function presetsTimeoutMessage(action) {
   return `${action} timed out. This page may have gone stale after being open for a long time. Refresh and try again.`;
+}
+
+function mergeModelDetails(models) {
+  return models.map((model) => {
+    const cached = modelDetailsCache.get(model.id) || {};
+    const merged = { ...model };
+
+    if (!merged.name && cached.name) merged.name = cached.name;
+    if (!merged.description && cached.description) merged.description = cached.description;
+    if ((!Array.isArray(merged.aliases) || merged.aliases.length === 0) && Array.isArray(cached.aliases) && cached.aliases.length > 0) {
+      merged.aliases = cached.aliases;
+    }
+    if ((merged.unlisted == null) && (cached.unlisted != null)) merged.unlisted = cached.unlisted;
+
+    const nextCached = { ...cached };
+    if (merged.name) nextCached.name = merged.name;
+    if (merged.description) nextCached.description = merged.description;
+    if (Array.isArray(merged.aliases) && merged.aliases.length > 0) nextCached.aliases = merged.aliases;
+    if (merged.unlisted != null) nextCached.unlisted = merged.unlisted;
+    modelDetailsCache.set(model.id, nextCached);
+
+    return merged;
+  });
+}
+
+function shouldHydrateModelDetails(models) {
+  return models.some((model) => !model.name && !model.description && (!Array.isArray(model.aliases) || model.aliases.length === 0));
 }
 
 async function fetchWithTimeout(url, opts = {}, timeoutMs = PRESETS_FETCH_TIMEOUT_MS) {
@@ -65,9 +96,10 @@ export async function fetchPresets() {
       return;
     }
     if (!resp.ok) throw new Error(await resp.text());
-    const models = await resp.json();
+    const models = mergeModelDetails(await resp.json());
     models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
     renderPresets(models);
+    presetsFetchedOnce = true;
   } catch (e) {
     if (e.name === 'TimeoutError') {
       showErr('presets-error', presetsTimeoutMessage('Refreshing model status'));
@@ -138,9 +170,14 @@ function handleModelStatusData(data) {
     return;
   }
   if (!Array.isArray(models)) return;
+  models = mergeModelDetails(models);
   clearErr('presets-error');
   models.sort((a, b) => ((a.name || a.id) + a.id).localeCompare((b.name || b.id) + b.id, undefined, { numeric: true }));
   renderPresets(models);
+  if (shouldHydrateModelDetails(models) && Date.now() - lastDetailsHydrateAt >= DETAILS_HYDRATE_COOLDOWN_MS) {
+    lastDetailsHydrateAt = Date.now();
+    fetchPresets();
+  }
 }
 
 function startModelStatusStream() {
@@ -154,6 +191,7 @@ function startModelStatusStream() {
 
   es.addEventListener('open', () => {
     stopPollingFallback();
+    if (!presetsFetchedOnce) fetchPresets();
   });
 
   es.addEventListener('modelStatus', (ev) => {
@@ -182,13 +220,6 @@ export function setupPresets() {
   setupPresetsResize();
   setupLogPaneControls();
   updateLogPaneVisibility();
-  document.getElementById('show-unlisted-checkbox')?.addEventListener('change', (e) => {
-    showUnlisted = e.target.checked;
-    fetchPresets();
-  });
-  document.getElementById('watch-all-btn')?.addEventListener('click', () => setWatchAll(true));
-  document.getElementById('watch-none-btn')?.addEventListener('click', () => setWatchAll(false));
-  document.getElementById('unload-all-btn')?.addEventListener('click', unloadAllModels);
   // Fetch backend settings (e.g. presetLogLines) asynchronously.
   fetch('/api/llamaswap/settings')
     .then(r => r.ok ? r.json() : null)
@@ -600,6 +631,13 @@ function renderPresets(models) {
   }
 
   list.innerHTML = html;
+  document.getElementById('show-unlisted-checkbox')?.addEventListener('change', (e) => {
+    showUnlisted = e.target.checked;
+    fetchPresets();
+  });
+  document.getElementById('watch-all-btn')?.addEventListener('click', () => setWatchAll(true));
+  document.getElementById('watch-none-btn')?.addEventListener('click', () => setWatchAll(false));
+  document.getElementById('unload-all-btn')?.addEventListener('click', unloadAllModels);
   list.querySelectorAll('.load-btn').forEach(btn => {
     btn.addEventListener('click', () => loadModel(btn.dataset.modelId));
   });
