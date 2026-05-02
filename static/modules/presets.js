@@ -15,6 +15,7 @@ import { llamaServerURL } from './status-polling.js';
 // ── Persistent UI state ───────────────────────────────────────────────────────
 let showUnlisted = true;
 const watchedModels = new Set(); // model IDs whose log checkbox is checked
+const explicitlyUnwatchedModels = new Set(); // model IDs manually unchecked by the user
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 let pollTimer = null;
@@ -353,12 +354,24 @@ function applyScrollbackLimit() {
 }
 
 function setWatchAll(checked) {
+  if (checked) {
+    // Reset manual opt-outs so current/future models default to watched.
+    explicitlyUnwatchedModels.clear();
+  }
   document.querySelectorAll('.watch-checkbox').forEach(cb => {
     if (cb.checked !== checked) {
       cb.checked = checked;
       cb.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
+}
+
+function applyDefaultWatchSelections(models) {
+  // Default behavior: watch everything unless user explicitly unchecked a model.
+  for (const model of models) {
+    if (!model?.id) continue;
+    if (!explicitlyUnwatchedModels.has(model.id)) watchedModels.add(model.id);
+  }
 }
 
 // ── Log pane visibility ───────────────────────────────────────────────────────
@@ -767,6 +780,8 @@ function renderPresets(models) {
     return;
   }
 
+  applyDefaultWatchSelections(models);
+
   const regularModels = models.filter(m => !m.peerID);
   const peerGroups = {};
   for (const m of models.filter(m => m.peerID)) {
@@ -842,9 +857,11 @@ function renderPresets(models) {
     const id = cb.dataset.modelId;
     cb.addEventListener('change', (e) => {
       if (e.target.checked) {
+        explicitlyUnwatchedModels.delete(id);
         watchedModels.add(id);
         syncWatchedLogStreamsToModelStates();
       } else {
+        explicitlyUnwatchedModels.add(id);
         watchedModels.delete(id);
         stopLogStream(id);
         modelBuffers.delete(id);
@@ -856,6 +873,7 @@ function renderPresets(models) {
   });
   // Auto-resume streams for already watched models (e.g. after mode switch).
   syncWatchedLogStreamsToModelStates();
+  updateLogPaneVisibility();
 }
 
 function modelRow(model) {
