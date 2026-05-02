@@ -31,6 +31,16 @@ let lastRamUsedBytes = null;
 let lastGpuPct = null;
 let initialVersion = null;
 
+function bytesToGiB(bytes) {
+  return bytes / (1024 ** 3);
+}
+
+function formatGiBValue(bytes) {
+  const gib = bytesToGiB(bytes);
+  // Keep compact whole numbers for large values; one decimal for smaller values.
+  return gib >= 100 ? String(Math.round(gib)) : gib.toFixed(1);
+}
+
 function setHeaderConnectionState(connected) {
   const header = document.querySelector('header');
   if (!header) return;
@@ -102,16 +112,18 @@ export async function pollStatus() {
       ramTotalBytes = s.ramTotalBytes;
       const fill = document.getElementById('ram-bar-fill');
       const text = document.getElementById('ram-text');
+      const totalGiB = formatGiBValue(s.ramTotalBytes);
       if (s.ramKnown) lastRamUsedBytes = s.ramUsedBytes;
       if (lastRamUsedBytes !== null) {
         const pct = Math.round(lastRamUsedBytes / s.ramTotalBytes * 100);
         fill.style.width = pct + '%';
         fill.className = 'resource-bar-fill ' + (pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : 'ok');
-        text.textContent = 'RAM: ' + formatBytes(lastRamUsedBytes) + ' / ' + formatBytes(s.ramTotalBytes);
+        const usedGiB = formatGiBValue(lastRamUsedBytes);
+        text.textContent = `RAM: ${pct}% (${usedGiB} / ${totalGiB} GiB)`;
       } else {
         fill.style.width = '0%';
         fill.className = 'resource-bar-fill ok';
-        text.textContent = 'RAM: ? / ' + formatBytes(s.ramTotalBytes);
+        text.textContent = `RAM: ?% (? / ${totalGiB} GiB)`;
       }
       const gpuRow = document.getElementById('gpu-row');
       if (s.gpuPctKnown) lastGpuPct = Math.round(s.gpuPct);
