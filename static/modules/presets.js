@@ -170,6 +170,7 @@ export function stopPresetsPolling() {
   }
   presetsFetchInFlight = false;
   stopAllLogStreams();
+  updateLogConnectionState();
 }
 
 function ensurePollingFallback() {
@@ -272,6 +273,25 @@ export function setupPresets() {
   window.addEventListener('w84:llama-server-url-changed', () => {
     renderPresetsIfReady();
   });
+
+  // Browsers may suspend long-lived network streams in background tabs.
+  // Force a clean stream restart when the page returns or network comes back.
+  const restartStreams = () => {
+    const presetsMode = document.getElementById('presets-mode');
+    if (!presetsMode?.classList.contains('active')) return;
+    startModelStatusStream();
+    restartWatchedLogStreams();
+  };
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') restartStreams();
+  });
+  window.addEventListener('pageshow', restartStreams);
+  window.addEventListener('online', restartStreams);
+  window.addEventListener('offline', () => updateLogConnectionState('offline'));
+
+  updateLogConnectionState();
+
   // Fetch backend settings (e.g. presetLogLines) asynchronously.
   fetch('/api/llamaswap/settings')
     .then(r => r.ok ? r.json() : null)
@@ -347,6 +367,54 @@ function updateLogPaneVisibility() {
   document.getElementById('presets-resize-handle')?.classList.toggle('log-pane-hidden', hidden);
 }
 
+function updateLogConnectionState(forcedState = '') {
+  const el = document.getElementById('log-conn-state');
+  if (!el) return;
+
+  const setState = (state, text, title) => {
+    el.className = `log-conn-state state-${state}`;
+    el.textContent = text;
+    el.title = title || 'Watched log stream connection state';
+  };
+
+  if (forcedState === 'offline') {
+    setState('offline', 'offline', 'Browser reports network offline');
+    return;
+  }
+
+  if (watchedModels.size === 0) {
+    setState('idle', 'idle', 'No watched model logs');
+    return;
+  }
+
+  let connected = 0;
+  let connecting = 0;
+  let reconnecting = 0;
+  let error = 0;
+
+  for (const stream of activeStreams.values()) {
+    const state = stream.state || 'connecting';
+    if (state === 'connected') connected += 1;
+    else if (state === 'connecting') connecting += 1;
+    else if (state === 'reconnecting') reconnecting += 1;
+    else if (state === 'error') error += 1;
+  }
+
+  if (connected > 0 && connecting === 0 && reconnecting === 0 && error === 0 && connected === watchedModels.size) {
+    setState('connected', 'connected', `Connected: ${connected}/${watchedModels.size}`);
+    return;
+  }
+  if (reconnecting > 0) {
+    setState('reconnecting', `reconnecting ${reconnecting}`, `Reconnecting streams: ${reconnecting}/${watchedModels.size}`);
+    return;
+  }
+  if (error > 0) {
+    setState('error', `error ${error}`, `Streams with errors: ${error}/${watchedModels.size}`);
+    return;
+  }
+  setState('connecting', `connecting ${connecting || watchedModels.size}`, `Connecting streams: ${connecting || watchedModels.size}/${watchedModels.size}`);
+}
+
 // ── Log pane controls ─────────────────────────────────────────────────────────
 function setupLogPaneControls() {
   document.getElementById('log-lines-apply-btn')?.addEventListener('click', () => applyScrollbackLimit());
@@ -408,7 +476,7 @@ function setupLogPaneControls() {
 }
 
 // ── Log streaming ─────────────────────────────────────────────────────────────
-const activeStreams = new Map();  // modelId → AbortController
+const activeStreams = new Map();  // modelId → { ctrl, retryTimer, retryAttempt, token }
 const modelBuffers = new Map();   // modelId → [{seq, ts, line}]
 let globalSeq = 0;
 let maxLogLines = 200;            // lines stored per model; synced with #log-lines-input
@@ -416,11 +484,42 @@ let logAutoScroll = true;
 let logFontSizeIdx = 0;           // index into LOG_FONT_SIZES
 const LOG_FONT_SIZES = ['', 'log-size-sm', 'log-size-xs', 'log-size-xxs']; // '' = default (largest)
 let logInPlace = true;            // \r lines overwrite last entry (progress bars)
+const LOG_RETRY_MIN_DELAY_MS = 1000;
+const LOG_RETRY_MAX_DELAY_MS = 30000;
 
-function startLogStream(modelId) {
-  stopLogStream(modelId);
+function nextLogRetryDelayMs(attempt) {
+  const exp = Math.min(LOG_RETRY_MAX_DELAY_MS, LOG_RETRY_MIN_DELAY_MS * (2 ** Math.min(attempt, 5)));
+  const jitter = Math.floor(Math.random() * 400);
+  return Math.min(LOG_RETRY_MAX_DELAY_MS, exp + jitter);
+}
+
+function scheduleLogReconnect(modelId, stream) {
+  if (!stream || stream.retryTimer || !watchedModels.has(modelId)) return;
+  stream.state = 'reconnecting';
+  updateLogConnectionState();
+  const delay = nextLogRetryDelayMs(stream.retryAttempt);
+  stream.retryAttempt += 1;
+  stream.retryTimer = setTimeout(() => {
+    stream.retryTimer = null;
+    if (!watchedModels.has(modelId) || activeStreams.get(modelId) !== stream) return;
+    connectLogStream(modelId, stream);
+  }, delay);
+}
+
+function connectLogStream(modelId, stream) {
+  if (!stream || !watchedModels.has(modelId) || activeStreams.get(modelId) !== stream) return;
+
+  stream.state = stream.retryAttempt > 0 ? 'reconnecting' : 'connecting';
+  updateLogConnectionState();
+
+  if (stream.ctrl) {
+    stream.ctrl.abort();
+    stream.ctrl = null;
+  }
+
   const ctrl = new AbortController();
-  activeStreams.set(modelId, ctrl);
+  stream.ctrl = ctrl;
+  const token = ++stream.token;
 
   // Model IDs may contain slashes (e.g. "author/model"); encode each segment.
   const path = modelId.split('/').map(encodeURIComponent).join('/');
@@ -429,10 +528,25 @@ function startLogStream(modelId) {
     try {
       const resp = await fetch(`/api/llamaswap/logs/stream/${path}`, { signal: ctrl.signal });
       if (!resp.ok) {
+        stream.state = 'error';
+        updateLogConnectionState();
         feedChunk(modelId, `[stream error: HTTP ${resp.status}]\n`);
+        scheduleLogReconnect(modelId, stream);
         return;
       }
-      const reader = resp.body.getReader();
+      stream.retryAttempt = 0;
+      stream.state = 'connected';
+      updateLogConnectionState();
+
+      const reader = resp.body?.getReader();
+      if (!reader) {
+        stream.state = 'error';
+        updateLogConnectionState();
+        feedChunk(modelId, '[stream error: response body unavailable]\n');
+        scheduleLogReconnect(modelId, stream);
+        return;
+      }
+
       const decoder = new TextDecoder();
       while (true) {
         const { done, value } = await reader.read();
@@ -440,21 +554,54 @@ function startLogStream(modelId) {
         feedChunk(modelId, decoder.decode(value, { stream: true }));
       }
       finalizeLiveLine(modelId);
+      if (activeStreams.get(modelId) === stream && token === stream.token && watchedModels.has(modelId)) {
+        stream.state = 'reconnecting';
+        updateLogConnectionState();
+        scheduleLogReconnect(modelId, stream);
+      }
     } catch (e) {
-      if (e.name !== 'AbortError') feedChunk(modelId, `[stream closed: ${e.message}]\n`);
+      if (e.name !== 'AbortError') {
+        stream.state = 'error';
+        updateLogConnectionState();
+        feedChunk(modelId, `[stream closed: ${e.message}]\n`);
+        if (activeStreams.get(modelId) === stream && token === stream.token && watchedModels.has(modelId)) {
+          scheduleLogReconnect(modelId, stream);
+        }
+      }
     }
   })();
 }
 
+function startLogStream(modelId) {
+  stopLogStream(modelId);
+  const stream = { ctrl: null, retryTimer: null, retryAttempt: 0, token: 0, state: 'connecting' };
+  activeStreams.set(modelId, stream);
+  updateLogConnectionState();
+  connectLogStream(modelId, stream);
+}
+
 function stopLogStream(modelId) {
-  const ctrl = activeStreams.get(modelId);
-  if (ctrl) { ctrl.abort(); activeStreams.delete(modelId); }
+  const stream = activeStreams.get(modelId);
+  if (stream) {
+    if (stream.retryTimer) clearTimeout(stream.retryTimer);
+    if (stream.ctrl) stream.ctrl.abort();
+    activeStreams.delete(modelId);
+  }
+  updateLogConnectionState();
   finalizeLiveLine(modelId);
 }
 
 function stopAllLogStreams() {
-  for (const ctrl of activeStreams.values()) ctrl.abort();
+  for (const stream of activeStreams.values()) {
+    if (stream.retryTimer) clearTimeout(stream.retryTimer);
+    if (stream.ctrl) stream.ctrl.abort();
+  }
   activeStreams.clear();
+  updateLogConnectionState();
+}
+
+function restartWatchedLogStreams() {
+  for (const modelId of watchedModels) startLogStream(modelId);
 }
 
 // ── Real-time chunk-based log feeding ────────────────────────────────────────
