@@ -156,10 +156,12 @@ export async function fetchPresets() {
 
 export function startPresetsPolling() {
   stopPresetsPolling();
+  startLogWatchdog();
   startModelStatusStream();
 }
 
 export function stopPresetsPolling() {
+  stopLogWatchdog();
   stopModelStatusStream();
   disarmPollingFallback();
   if (pollTimer !== null) {
@@ -478,7 +480,7 @@ function setupLogPaneControls() {
 }
 
 // ── Log streaming ─────────────────────────────────────────────────────────────
-const activeStreams = new Map();  // modelId → { ctrl, retryTimer, retryAttempt, token }
+const activeStreams = new Map();  // modelId -> { ctrl, retryTimer, retryAttempt, token, state, connectedAt, lastActivityAt }
 const modelBuffers = new Map();   // modelId → [{seq, ts, line}]
 let globalSeq = 0;
 let maxLogLines = 200;            // max lines stored across all watched logs; synced with #log-lines-input
@@ -486,8 +488,12 @@ let logAutoScroll = true;
 let logFontSizeIdx = 0;           // index into LOG_FONT_SIZES
 const LOG_FONT_SIZES = ['', 'log-size-sm', 'log-size-xs', 'log-size-xxs']; // '' = default (largest)
 let logInPlace = true;            // \r lines overwrite last entry (progress bars)
+let logWatchdogTimer = null;
 const LOG_RETRY_MIN_DELAY_MS = 1000;
 const LOG_RETRY_MAX_DELAY_MS = 30000;
+const LOG_WATCHDOG_INTERVAL_MS = 15000;
+const LOG_STREAM_MAX_AGE_MS = 15 * 60 * 1000;
+const LOG_STREAM_ACTIVE_IDLE_MAX_MS = 90 * 1000;
 const LOG_PREFS_STORAGE_KEY = 'w84.presets.logPrefs';
 
 function isNearLogBottom(el) {
@@ -527,6 +533,11 @@ function isModelReadyForLogs(modelId) {
   const state = getModelState(modelId);
   // Connect as soon as a watched model enters loading, even if load started externally.
   return state === 'ready' || state === 'starting' || state === 'loading';
+}
+
+function isModelActivelyProducingLogs(modelId) {
+  const state = getModelState(modelId);
+  return state === 'starting' || state === 'loading';
 }
 
 function syncWatchedLogStreamsToModelStates() {
@@ -601,6 +612,8 @@ function connectLogStream(modelId, stream) {
       }
       stream.retryAttempt = 0;
       stream.state = 'connected';
+      stream.connectedAt = Date.now();
+      stream.lastActivityAt = stream.connectedAt;
       updateLogConnectionState();
 
       const reader = resp.body?.getReader();
@@ -616,6 +629,7 @@ function connectLogStream(modelId, stream) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        stream.lastActivityAt = Date.now();
         feedChunk(modelId, decoder.decode(value, { stream: true }));
       }
       finalizeLiveLine(modelId);
@@ -639,7 +653,15 @@ function connectLogStream(modelId, stream) {
 
 function startLogStream(modelId) {
   stopLogStream(modelId);
-  const stream = { ctrl: null, retryTimer: null, retryAttempt: 0, token: 0, state: 'connecting' };
+  const stream = {
+    ctrl: null,
+    retryTimer: null,
+    retryAttempt: 0,
+    token: 0,
+    state: 'connecting',
+    connectedAt: 0,
+    lastActivityAt: 0
+  };
   activeStreams.set(modelId, stream);
   updateLogConnectionState();
   connectLogStream(modelId, stream);
@@ -667,6 +689,36 @@ function stopAllLogStreams() {
 
 function restartWatchedLogStreams() {
   syncWatchedLogStreamsToModelStates();
+}
+
+function startLogWatchdog() {
+  if (logWatchdogTimer !== null) return;
+  logWatchdogTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [modelId, stream] of activeStreams) {
+      if (!stream || activeStreams.get(modelId) !== stream || stream.state !== 'connected') continue;
+
+      const connectedAt = stream.connectedAt || now;
+      const lastActivityAt = stream.lastActivityAt || connectedAt;
+      const staleByAge = (now - connectedAt) >= LOG_STREAM_MAX_AGE_MS;
+      const staleByIdle = isModelActivelyProducingLogs(modelId)
+        && ((now - lastActivityAt) >= LOG_STREAM_ACTIVE_IDLE_MAX_MS);
+
+      if (!staleByAge && !staleByIdle) continue;
+
+      stream.retryAttempt = 0;
+      stream.state = 'reconnecting';
+      updateLogConnectionState();
+      connectLogStream(modelId, stream);
+    }
+  }, LOG_WATCHDOG_INTERVAL_MS);
+}
+
+function stopLogWatchdog() {
+  if (logWatchdogTimer !== null) {
+    clearInterval(logWatchdogTimer);
+    logWatchdogTimer = null;
+  }
 }
 
 // ── Real-time chunk-based log feeding ────────────────────────────────────────
